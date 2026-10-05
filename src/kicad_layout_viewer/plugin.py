@@ -260,6 +260,7 @@ def _normalize_layer(value):
             .replace("adhesive", "adhes")
             .replace("courtyard", "crtyd")
             .replace("userdrawings", "dwgsuser")
+            .replace("user9", "dwgsuser")
             .replace("usercomments", "cmtsuser")
             .replace("usereco1", "eco1user")
             .replace("usereco2", "eco2user"))
@@ -275,10 +276,17 @@ def _svg_file_layers(svg_files, board_stem, layer_names):
         candidates = [name for key, name in by_normalized.items() if key == normalized or normalized.endswith(key)]
         if len(candidates) == 1:
             results[candidates[0]] = path
-    missing = [name for name in layer_names if name not in results]
+
+    optional_layers = {"User.Drawings", "Dwgs.User", "User.9"}   # keep the historic name as well
+    missing = [name for name in layer_names
+               if name not in results and name not in optional_layers]
     if missing:
         files = ", ".join(path.name for path in svg_files)
-        raise RuntimeError("Could not match KiCad's SVG output to these layers: " + ", ".join(missing) + ". Exported files: " + files)
+        raise RuntimeError(
+            "Could not match KiCad's SVG output to these layers: "
+            + ", ".join(missing)
+            + ". Exported files: " + files
+        )
     return results
 
 
@@ -774,8 +782,22 @@ def export_board(board, board_path, output_path):
         render_board_path = Path(temp_dir) / (Path(board_path).stem + "-viewer-base.kicad_pcb")
         _write_zone_free_render_board(board_path, render_board_path, board_text)
         svg_files = _export_svgs(cli, str(render_board_path), layer_names, svg_dir)
+
+        # -----------------------------------------------------------------
+        # Get the mapping from layer name → SVG file.  The mechanical‑drawing
+        # layer (User.Drawings / Dwgs.User / User.9) may be missing if it
+        # contains only text or is empty, so we must not assume every name
+        # in `layer_names` has a corresponding SVG file.
+        # -----------------------------------------------------------------
         matched = _svg_file_layers(svg_files, render_board_path.stem, layer_names)
-        raw_root = ET.parse(str(matched[layer_names[0]])).getroot()
+
+        # Choose the first layer that actually has an SVG file.  This file is
+        # only needed to read the generic SVG metadata (viewBox, etc.).
+        available_layers = [name for name in layer_names if name in matched]
+        if not available_layers:
+            raise RuntimeError("No SVG files were generated for any board layer.")
+        raw_root = ET.parse(str(matched[available_layers[0]])).getroot()
+
         view_box = [float(number) for number in re.split(r"[ ,]+", raw_root.get("viewBox", "").strip()) if number]
         if len(view_box) != 4:
             raise RuntimeError("KiCad's SVG is missing a valid viewBox.")
@@ -791,7 +813,13 @@ def export_board(board, board_path, output_path):
             "y": view_box[1] + drill_origin_mm[1] - edge_bounds[1] + svg_offset[1],
         }
         nonplated_centers = _nonplated_pad_centers(board, view_box, edge_bounds, svg_offset)
-        svg_roots = [_svg_root(matched[name], name, nonplated_centers) for name in layer_names]
+
+        # Build SVG roots only for layers that really have a file.  Missing
+        # mechanical‑drawing layers are simply omitted – the viewer will still
+        # display the toggle for them, but they will be invisible when empty.
+        svg_roots = [_svg_root(matched[name], name, nonplated_centers)
+                    for name in layer_names if name in matched]
+        
         for svg_root, name in zip(svg_roots, layer_names):
             if name.endswith(".Cu"):
                 zone_group = _zone_fill_group(zone_fills, name, view_box, edge_bounds, svg_offset)
