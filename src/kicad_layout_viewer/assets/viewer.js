@@ -3,6 +3,7 @@
   const data = JSON.parse(document.getElementById("viewer-data").textContent);
   const layers = data.layers;
   const nets = data.nets;
+  const parts = data.parts || [];
   const $ = (selector) => document.querySelector(selector);
   const themeButton = $("#toggle-theme");
   const themeStorageKey = "kicad-layout-viewer:theme:v1";
@@ -26,6 +27,7 @@
   themeButton.addEventListener("click", () => applyViewerTheme(!lightTheme, true));
   const layerList = $("#layer-list");
   const netList = $("#net-list");
+  const partList = $("#part-list");
   const stack = $("#board-stack");
   const canvas = $("#canvas");
   const commentTooltip = document.createElement("div");
@@ -42,6 +44,129 @@
   const originalLayerPaint = new WeakMap();
   const lightNetPalette = ["#945f00", "#006783", "#a83f2b", "#4d7018", "#70509a", "#923a69", "#17634e", "#92500e"];
   const netById = new Map(nets.map((net, index) => [String(net.code), { net, index }]));
+  function zoneRings(geometry) {
+    if (geometry.zoneRings) return geometry.zoneRings;
+    const tokens = (geometry.getAttribute("d") || "").match(/[MLZ]|[-+]?(?:\d*\.\d+|\d+\.?\d*)(?:[eE][-+]?\d+)?/g) || [];
+    const rings = [];
+    let ring = null;
+    for (let index = 0; index < tokens.length;) {
+      const command = tokens[index++];
+      if (command === "M" || command === "L") {
+        const point = [Number(tokens[index++]), Number(tokens[index++])];
+        if (command === "M") {
+          if (ring?.length >= 3) rings.push(ring);
+          ring = [point];
+        } else if (ring) {
+          ring.push(point);
+        }
+      } else if (command === "Z") {
+        if (ring?.length >= 3) rings.push(ring);
+        ring = null;
+      }
+    }
+    if (ring?.length >= 3) rings.push(ring);
+    geometry.zoneRings = rings;
+    return rings;
+  }
+  function pointInRing(point, ring) {
+    let inside = false;
+    for (let index = 0, previous = ring.length - 1; index < ring.length; previous = index++) {
+      const [x1, y1] = ring[previous];
+      const [x2, y2] = ring[index];
+      const cross = (point.x - x1) * (y2 - y1) - (point.y - y1) * (x2 - x1);
+      if (Math.abs(cross) < 1e-7
+          && point.x >= Math.min(x1, x2) - 1e-7 && point.x <= Math.max(x1, x2) + 1e-7
+          && point.y >= Math.min(y1, y2) - 1e-7 && point.y <= Math.max(y1, y2) + 1e-7) return true;
+      if ((y1 > point.y) !== (y2 > point.y)
+          && point.x < (x2 - x1) * (point.y - y1) / (y2 - y1) + x1) inside = !inside;
+    }
+    return inside;
+  }
+  function pointInZoneCopper(geometry, point) {
+    const rings = zoneRings(geometry);
+    return rings.reduce((inside, ring) => inside !== pointInRing(point, ring), false);
+  }
+  function geometryHitAtScreenPoint(geometry, screenPoint) {
+    const matrix = geometry.getScreenCTM();
+    if (!matrix) return false;
+    const point = screenPoint.matrixTransform(matrix.inverse());
+    if (geometry.matches(".zone-highlight")) return pointInZoneCopper(geometry, point);
+    if (geometry.matches(".via-highlight")) {
+      const cx = Number(geometry.getAttribute("cx"));
+      const cy = Number(geometry.getAttribute("cy"));
+      const radius = Number(geometry.getAttribute("r"));
+      const center = new DOMPoint(cx, cy).matrixTransform(matrix);
+      const edgeX = new DOMPoint(cx + radius, cy).matrixTransform(matrix);
+      const edgeY = new DOMPoint(cx, cy + radius).matrixTransform(matrix);
+      const radiusOnScreen = Math.max(
+        Math.hypot(edgeX.x - center.x, edgeX.y - center.y),
+        Math.hypot(edgeY.x - center.x, edgeY.y - center.y)
+      );
+      const strokeWidth = Number.parseFloat(getComputedStyle(geometry).strokeWidth) || 0;
+      const clickRadius = radiusOnScreen + strokeWidth / 2;
+      if (Math.hypot(screenPoint.x - center.x, screenPoint.y - center.y) <= clickRadius) return true;
+    }
+    const fillHit = geometry.matches(".pad-highlight, .via-highlight") && geometry.isPointInFill(point);
+    const strokeHit = geometry.matches(".net-highlight, .pad-highlight") && geometry.isPointInStroke(point);
+    return fillHit || strokeHit;
+  }
+  function choosePartAtPoint(partTarget, screenPoint) {
+    const matrix = overlay.getScreenCTM();
+    if (!matrix) {
+      choosePart(partTarget.dataset.partId);
+      return true;
+    }
+    const point = screenPoint.matrixTransform(matrix.inverse());
+    const candidates = parts.map((part, id) => ({ part, id })).filter(({ part }) =>
+      point.x >= part.box.x && point.x <= part.box.right
+      && point.y >= part.box.y && point.y <= part.box.bottom
+    ).sort((a, b) =>
+      (a.part.box.right - a.part.box.x) * (a.part.box.bottom - a.part.box.y)
+      - (b.part.box.right - b.part.box.x) * (b.part.box.bottom - b.part.box.y)
+    );
+    if (!candidates.length) return false;
+    choosePart(candidates[0].id);
+    return true;
+  }
+  function resolveZoneClickStack(event, zoneTarget, screenPoint) {
+    const visited = new Set();
+    const candidates = document.elementsFromPoint(event.clientX, event.clientY);
+    let partTarget = null;
+    let zoneGroup = null;
+    for (const element of candidates) {
+      const target = element.closest?.(".part-hit, .zone-highlight, .pad-highlight, .via-highlight, .net-highlight");
+      if (!target || !overlay.contains(target) || visited.has(target)) continue;
+      visited.add(target);
+      if (target.matches(".part-hit")) {
+        partTarget ||= target;
+        continue;
+      }
+      if (target.matches(".zone-highlight")) {
+        if (Number(zoneTransparencyInput.value) < 100 && geometryHitAtScreenPoint(target, screenPoint)) {
+          zoneGroup ||= target.closest("[data-net-id]");
+        }
+        continue;
+      }
+      if (!geometryHitAtScreenPoint(target, screenPoint)) continue;
+      const netGroup = target.closest("[data-net-id]");
+      if (netGroup) {
+        chooseNet(netGroup.dataset.netId);
+        return true;
+      }
+    }
+    if (partTarget && choosePartAtPoint(partTarget, screenPoint)) {
+      return true;
+    }
+    if (!zoneGroup && Number(zoneTransparencyInput.value) < 100
+        && geometryHitAtScreenPoint(zoneTarget, screenPoint)) {
+      zoneGroup = zoneTarget.closest("[data-net-id]");
+    }
+    if (zoneGroup) {
+      chooseNet(zoneGroup.dataset.netId);
+      return true;
+    }
+    return false;
+  }
   function lightLayerColor(name) {
     if (name.endsWith(".SilkS")) return "#51482f";
     if (name.endsWith(".Cu")) {
@@ -121,14 +246,17 @@
   commentOverlay.setAttribute("preserveAspectRatio", "xMidYMid meet");
   stack.append(commentOverlay);
   const selectedNets = new Set();
+  const selectedPartIds = new Set();
   function updateZoneTransparency() {
-    const transparency = Number(zoneTransparencyInput.value) / 100;
+    const transparencyPercent = Number(zoneTransparencyInput.value);
+    const transparency = transparencyPercent / 100;
     const opacity = 1 - transparency;
     layerSvgs.forEach((svg) => {
       svg.querySelectorAll(".copper-zone-fill").forEach((zone) => {
         zone.style.opacity = String(opacity);
       });
     });
+    overlay.classList.toggle("zones-transparent", transparencyPercent >= 100);
     zoneTransparencyValue.textContent = `${zoneTransparencyInput.value}%`;
   }
   function defaultLayerPriority(name) {
@@ -263,6 +391,14 @@
       commentOverlay.append(marker);
       commentMarkerById.set(comment.id, marker);
     });
+    syncCommentMarkerText();
+  }
+
+  function syncCommentMarkerText() {
+    commentOverlay.querySelectorAll(".comment-marker text").forEach((number) => {
+      if (bottomView) number.setAttribute("transform", "scale(-1 1)");
+      else number.removeAttribute("transform");
+    });
   }
 
   function setCommentHighlight(commentId, highlighted) {
@@ -389,7 +525,7 @@
     $("#canvas").classList.toggle("is-placing-comment", active);
     $("#interaction-hint").textContent = active
       ? "Click a board coordinate to add a comment · Press Esc to cancel"
-      : "Scroll to zoom · Right-click and drag to pan · Click multiple nets to highlight";
+      : "Export comments to save · Scroll to zoom · Right-drag to pan · Click nets to highlight · Click parts to select pads";
   }
 
   function oppositeSideLayer(name) {
@@ -404,10 +540,14 @@
       const svg = svgByLayer.get(name);
       if (svg) stack.insertBefore(svg, overlay);
     });
+    const partHitLayer = overlay.querySelector(":scope > .part-hit-layer");
+    if (partHitLayer) overlay.insertBefore(partHitLayer, overlay.firstChild);
     [...layerOrder].reverse().forEach((name) => {
       const netLayer = [...overlay.children].find((group) => group.dataset.layer === name);
       if (netLayer) overlay.append(netLayer);
     });
+    const selectedPartPads = overlay.querySelector(":scope > .selected-part-pads");
+    if (selectedPartPads) overlay.append(selectedPartPads);
   }
 
   function layerVisible(name) {
@@ -503,9 +643,24 @@
     netList.querySelectorAll(".net-row").forEach((row) => {
       row.setAttribute("aria-pressed", String(selectedNets.has(row.dataset.netId)));
     });
+    partList.querySelectorAll(".part-row").forEach((row) => {
+      row.setAttribute("aria-pressed", String(selectedPartIds.has(row.dataset.partId)));
+    });
     const selected = nets.filter((net) => selectedNets.has(String(net.code)));
+    const selectedParts = [...selectedPartIds].map((id) => parts[Number(id)]).filter(Boolean);
+    if (selectedParts.length) {
+      const references = selectedParts.map((part) => part.reference);
+      const padCount = selectedParts.reduce((total, part) => total + part.pads.length, 0);
+      const label = selectedParts.length === 1
+        ? `Selected ${references[0]} · ${padCount} pads`
+        : `Selected ${selectedParts.length} parts · ${padCount} pads`;
+      $("#selection-status").textContent = label;
+      $("#selection-status").title = references.join(", ");
+      return;
+    }
     if (!selected.length) {
       $("#selection-status").textContent = "No net selected";
+      $("#selection-status").removeAttribute("title");
       return;
     }
     const pads = selected.reduce((total, net) => total + net.pads.length, 0);
@@ -514,6 +669,72 @@
     const names = selected.map((net) => net.name).join(", ");
     $("#selection-status").textContent = `${selected.length} net${selected.length === 1 ? "" : "s"} selected · ${pads} pads · ${tracks} tracks · ${vias} vias`;
     $("#selection-status").title = names;
+  }
+
+  function renderSelectedPartPads() {
+    overlay.querySelector(":scope > .selected-part-pads")?.remove();
+    const selectedParts = [...selectedPartIds].map((id) => parts[Number(id)]).filter(Boolean);
+    if (!selectedParts.length) return;
+    const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
+    group.setAttribute("class", "selected-part-pads");
+    const layerGroups = new Map();
+    selectedParts.forEach((part) => {
+      const partBox = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+      partBox.setAttribute("class", "selected-part-box");
+      partBox.setAttribute("x", part.box.x);
+      partBox.setAttribute("y", part.box.y);
+      partBox.setAttribute("width", part.box.right - part.box.x);
+      partBox.setAttribute("height", part.box.bottom - part.box.y);
+      partBox.setAttribute("rx", "0.5");
+      group.append(partBox);
+    });
+    selectedParts.forEach((part) => {
+      part.pads.forEach((pad) => {
+        pad.layers.forEach((layerName) => {
+          let layerGroup = layerGroups.get(layerName);
+          if (!layerGroup) {
+            layerGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
+            layerGroup.setAttribute("class", "selected-part-pad-layer");
+            layerGroup.dataset.layer = layerName;
+            layerGroups.set(layerName, layerGroup);
+            group.append(layerGroup);
+          }
+          const width = pad.width;
+          const height = pad.height;
+          let shape;
+          if (pad.shape === "circle" || pad.shape === "oval") {
+            shape = document.createElementNS("http://www.w3.org/2000/svg", "ellipse");
+            shape.setAttribute("cx", pad.x);
+            shape.setAttribute("cy", pad.y);
+            shape.setAttribute("rx", width / 2);
+            shape.setAttribute("ry", height / 2);
+            if (pad.shape === "oval" && Math.abs(width - height) > 0.001 && pad.angle) {
+              shape.setAttribute("transform", `rotate(${-pad.angle} ${pad.x} ${pad.y})`);
+            }
+          } else {
+            shape = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+            shape.setAttribute("x", pad.x - width / 2);
+            shape.setAttribute("y", pad.y - height / 2);
+            shape.setAttribute("width", width);
+            shape.setAttribute("height", height);
+            shape.setAttribute("rx", Math.min(width, height) * 0.18);
+            shape.setAttribute("transform", `rotate(${-pad.angle} ${pad.x} ${pad.y})`);
+          }
+          shape.setAttribute("class", "selected-part-pad");
+          layerGroup.append(shape);
+        });
+      });
+    });
+    overlay.append(group);
+    syncStackOrder();
+  }
+
+  function choosePart(partId) {
+    const id = String(partId);
+    if (selectedPartIds.has(id)) selectedPartIds.delete(id);
+    else selectedPartIds.add(id);
+    renderSelectedPartPads();
+    renderSelection();
   }
 
   function chooseNet(netId) {
@@ -548,11 +769,43 @@
     });
   }
 
+  const partReferenceOrder = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
+  function renderParts(filter = "") {
+    partList.replaceChildren();
+    const query = filter.trim().toLocaleLowerCase();
+    const matching = parts.map((part, id) => ({ part, id })).filter(({ part }) =>
+      part.reference.toLocaleLowerCase().includes(query)
+    );
+    matching.sort((a, b) => partReferenceOrder.compare(a.part.reference, b.part.reference) || a.id - b.id);
+    $("#part-count").textContent = `${matching.length} / ${parts.length}`;
+    const rows = document.createDocumentFragment();
+    matching.forEach(({ part, id }) => {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "part-row";
+      row.dataset.partId = String(id);
+      row.setAttribute("aria-pressed", String(selectedPartIds.has(String(id))));
+      row.setAttribute("aria-label", `Select part ${part.reference}${part.value ? `, ${part.value}` : ""}`);
+      const reference = document.createElement("span");
+      reference.className = "part-reference";
+      reference.textContent = part.reference;
+      const value = document.createElement("span");
+      value.className = "part-value";
+      value.textContent = part.value || "";
+      row.append(reference, value);
+      row.addEventListener("click", () => choosePart(String(id)));
+      rows.append(row);
+    });
+    partList.append(rows);
+  }
+
   updateZoneTransparency();
   zoneTransparencyInput.addEventListener("input", updateZoneTransparency);
   renderNets();
+  renderParts();
   layerOrder.forEach((layerName) => layerList.append(rowByLayer.get(layerName)));
   $("#net-search").addEventListener("input", (event) => renderNets(event.target.value));
+  $("#part-search").addEventListener("input", (event) => renderParts(event.target.value));
   $("#show-all-layers").addEventListener("click", () => {
     layerList.querySelectorAll("input").forEach((input) => { input.checked = true; });
     updateLayers();
@@ -725,6 +978,7 @@
     layerOrder.splice(0, layerOrder.length, ...flippedOrder);
     layerOrder.forEach((layerName) => layerList.append(rowByLayer.get(layerName)));
     stack.classList.toggle("is-bottom-view", bottomView);
+    syncCommentMarkerText();
     event.currentTarget.setAttribute("aria-pressed", String(bottomView));
     event.currentTarget.textContent = bottomView ? "View top" : "View bottom";
     event.currentTarget.title = bottomView ? "Return to the top side" : "Flip the board to view from the bottom";
@@ -739,21 +993,31 @@
     for (const selectedGroup of selectedGroups) {
       const layer = selectedGroup.closest(".net-layer");
       if (layer?.classList.contains("layer-hidden")) continue;
-      const geometries = [...selectedGroup.querySelectorAll(".net-highlight, .pad-highlight, .zone-highlight")].reverse();
+      const geometries = [...selectedGroup.querySelectorAll(".net-highlight, .pad-highlight")].reverse();
       for (const geometry of geometries) {
-        const matrix = geometry.getScreenCTM();
-        if (!matrix) continue;
-        const point = screenPoint.matrixTransform(matrix.inverse());
-        const fillHit = geometry.matches(".pad-highlight, .zone-highlight") && geometry.isPointInFill(point);
-        const strokeHit = geometry.matches(".net-highlight, .pad-highlight") && geometry.isPointInStroke(point);
-        if (fillHit || strokeHit) {
+        if (geometryHitAtScreenPoint(geometry, screenPoint)) {
           chooseNet(selectedGroup.dataset.netId);
           return;
         }
       }
     }
+    const partTarget = event.target.closest(".part-hit");
+    if (partTarget && choosePartAtPoint(partTarget, screenPoint)) {
+      return;
+    }
+    const zoneTarget = event.target.closest(".zone-highlight");
+    if (zoneTarget) {
+      resolveZoneClickStack(event, zoneTarget, screenPoint);
+      return;
+    }
     const group = event.target.closest("[data-net-id]");
     if (group) chooseNet(group.dataset.netId);
+  });
+  overlay.addEventListener("keydown", (event) => {
+    const partTarget = event.target.closest(".part-hit");
+    if (!partTarget || (event.key !== "Enter" && event.key !== " ")) return;
+    event.preventDefault();
+    choosePart(partTarget.dataset.partId);
   });
 
   $("#fit-board").addEventListener("click", () => { viewBox = [...originalViewBox]; syncViewBox(); });
@@ -771,6 +1035,8 @@
     layerOrder.splice(0, layerOrder.length, ...initialLayerOrder);
     layerOrder.forEach((layerName) => layerList.append(rowByLayer.get(layerName)));
     selectedNets.clear();
+    selectedPartIds.clear();
+    renderSelectedPartPads();
     renderSelection();
     zoneTransparencyInput.value = String(initialZoneTransparency);
     updateZoneTransparency();

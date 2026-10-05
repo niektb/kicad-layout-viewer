@@ -10,6 +10,7 @@
   <header class="topbar">
     <div class="brand"><span class="mark">K</span><div><strong>KiCad Layout Viewer</strong><small>{{BOARD_NAME}}</small><small class="board-meta">{{BOARD_META}}</small></div></div>
     <div class="toolbar">
+      <span class="viewer-credit">Viewer designed by Niek ten Brinke</span>
       <button id="fit-board" type="button" title="Fit board to view">Fit</button>
       <button id="reset-view" type="button" title="Restore initial board view, layers, order, net selection, and zone transparency">Reset</button>
       <button id="flip-board" type="button" aria-pressed="false" title="Flip the board to view from the bottom">View bottom</button>
@@ -33,6 +34,11 @@
         <input id="net-search" class="search" type="search" placeholder="Filter nets…" aria-label="Filter nets">
         <div id="net-list" class="net-list"></div>
       </section>
+      <section class="section parts-section">
+        <div class="section-heading"><h2>Parts</h2><span id="part-count" class="count"></span></div>
+        <input id="part-search" class="search" type="search" placeholder="Filter by reference…" aria-label="Filter parts by reference designator">
+        <div id="part-list" class="part-list"></div>
+      </section>
       <footer class="sidebar-footer">{{SUMMARY}}</footer>
     </aside>
     <section class="workspace" aria-label="Board layout">
@@ -44,7 +50,7 @@
         <div class="board-stack" id="board-stack">{{SVG_LAYERS}}{{NET_OVERLAY}}</div>
         <div id="empty-state" class="empty-state" hidden>Select at least one layer to view the board.</div>
       </div>
-      <div class="statusbar"><span id="selection-status">No net selected</span><span id="interaction-hint">Scroll to zoom · Right-click and drag to pan · Click multiple nets to highlight</span></div>
+      <div class="statusbar"><span id="selection-status">No net selected</span><span id="interaction-hint">Export comments to save · Scroll to zoom · Right-drag to pan · Click nets to highlight · Click parts to select pads</span></div>
     </section>
     <aside id="comments-panel" class="comments-panel" aria-label="Board comments" hidden>
       <div class="section-heading"><h2>Comments</h2><span id="comment-count" class="count">0</span></div>

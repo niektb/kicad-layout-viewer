@@ -20,6 +20,7 @@ import wx
 
 ASSET_DIR = Path(__file__).with_name("assets")
 SVG_NS = "http://www.w3.org/2000/svg"
+DRILL_HOLE_COLOR = "#d9dce0"
 ET.register_namespace("", SVG_NS)
 TOP_LEVEL_ZONE_RE = re.compile(r"\(\s*zone(?:\s|\))")
 
@@ -170,65 +171,46 @@ def _top_level_zone_spans(text):
         index += 1
 
 
-def _parse_sexpr(text):
-    tokens = re.findall(r'"(?:\\.|[^"\\])*"|[()]|[^\s()]+', text)
-    position = 0
-
-    def parse_expression():
-        nonlocal position
-        if position >= len(tokens) or tokens[position] != "(":
-            raise RuntimeError("Invalid zone expression in PCB file.")
-        position += 1
-        expression = []
-        while position < len(tokens) and tokens[position] != ")":
-            token = tokens[position]
-            if token == "(":
-                expression.append(parse_expression())
-                continue
-            position += 1
-            expression.append(json.loads(token) if token.startswith('"') else token)
-        if position >= len(tokens):
-            raise RuntimeError("Incomplete zone expression in PCB file.")
-        position += 1
-        return expression
-
-    return parse_expression()
-
-
-def _sexpr_child(expression, name):
-    return next((item for item in expression[1:]
-                 if isinstance(item, list) and item and item[0] == name), None)
-
-
-def _sexpr_points(pts_expression):
-    if not pts_expression:
-        return []
-    points = []
-    for point in pts_expression[1:]:
-        if isinstance(point, list) and len(point) >= 3 and point[0] == "xy":
-            points.append((float(point[1]), float(point[2])))
-    return points
-
-
-def _zone_fills_from_board_text(text):
+def _zone_fills_from_board(board, layer_definitions):
+    """Read KiCad's filled copper geometry, including clearance holes."""
     records = []
-    for start, end in _top_level_zone_spans(text):
-        zone = _parse_sexpr(text[start:end])
-        net = _sexpr_child(zone, "net")
-        net_name = str(net[1]) if net and len(net) > 1 else ""
-        for filled_polygon in (item for item in zone[1:]
-                               if isinstance(item, list) and item and item[0] == "filled_polygon"):
-            layer = _sexpr_child(filled_polygon, "layer")
-            pts = _sexpr_child(filled_polygon, "pts")
-            outer = _sexpr_points(pts)
-            if not layer or len(layer) < 2 or len(outer) < 3:
+    net_names = {
+        int(code): _as_text(_call(net, ("GetNetname", "GetNetName"), ""))
+        for code, net in board.GetNetsByNetcode().items()
+    }
+    copper_layers = [(number, name) for number, name, _ in layer_definitions
+                     if name.endswith(".Cu")]
+
+    def chain_points(chain):
+        return [_point(chain.CPoint(index)) for index in range(chain.PointCount())]
+
+    for zone in board.Zones():
+        net_code = int(_call(zone, ("GetNetCode",), 0) or 0)
+        for layer_id, layer_name in copper_layers:
+            has_fill = getattr(zone, "HasFilledPolysForLayer", None)
+            if has_fill is not None:
+                try:
+                    if not has_fill(layer_id):
+                        continue
+                except Exception:
+                    pass
+            try:
+                polyset = zone.GetFilledPolysList(layer_id)
+            except Exception:
                 continue
-            rings = [outer]
-            holes = _sexpr_child(filled_polygon, "holes")
-            if holes:
-                rings.extend(points for points in (_sexpr_points(item) for item in holes[1:])
-                             if len(points) >= 3)
-            records.append({"net": net_name, "layer": str(layer[1]), "rings": rings})
+            if polyset is None:
+                continue
+            for outline_index in range(polyset.OutlineCount()):
+                outer = chain_points(polyset.COutline(outline_index))
+                if len(outer) < 3:
+                    continue
+                rings = [outer]
+                for hole_index in range(polyset.HoleCount(outline_index)):
+                    hole = chain_points(polyset.CHole(outline_index, hole_index))
+                    if len(hole) >= 3:
+                        rings.append(hole)
+                records.append({"net": net_names.get(net_code, ""),
+                                "layer": layer_name, "rings": rings})
     return records
 
 
@@ -299,15 +281,14 @@ def _svg_root(path, layer_name, nonplated_pad_centers=()):
     root.set("preserveAspectRatio", "xMidYMid meet")
     layer_color = _color_for_layer(layer_name)
     # KiCad emits unstyled circles for round pads and vias. Give these the
-    # layer color so plated copper remains visible; drill openings are masked
-    # separately after the SVG artwork has been assembled.
+    # layer color as a fill without an outline, which would enlarge the copper
+    # diameter; drill openings are masked separately after SVG assembly.
     pad_circles = []
     for circle in root.iter("{%s}circle" % SVG_NS):
         if "style" not in circle.attrib and "fill" not in circle.attrib and "stroke" not in circle.attrib:
             pad_circles.append(circle)
             circle.set("fill", layer_color)
-            circle.set("stroke", layer_color)
-            circle.set("stroke-width", "0.12")
+            circle.set("stroke", "none")
     for element in root.iter():
         for attribute in ("fill", "stroke"):
             value = element.get(attribute)
@@ -324,8 +305,8 @@ def _svg_root(path, layer_name, nonplated_pad_centers=()):
                     declaration = property_name + separator + layer_color
                 declarations.append(declaration)
             element.set("style", ";".join(declarations))
-    # Non-plated holes have no copper annulus. Keep their exported circular
-    # pad shape white instead of assigning it the copper layer color.
+    # Non-plated pads have no copper annulus. Suppress their exported pad
+    # outline; the separate drill-hole group paints the actual drill size.
     for circle in pad_circles:
         try:
             center = (float(circle.get("cx")), float(circle.get("cy")))
@@ -333,8 +314,8 @@ def _svg_root(path, layer_name, nonplated_pad_centers=()):
             continue
         if any(abs(center[0] - x) < 0.01 and abs(center[1] - y) < 0.01
                for x, y in nonplated_pad_centers):
-            circle.set("fill", "#ffffff")
-            circle.set("stroke", "#ffffff")
+            circle.set("fill", "none")
+            circle.set("stroke", "none")
             circle.set("class", (circle.get("class", "") + " nonplated-pad-mask").strip())
     return root
 
@@ -350,7 +331,7 @@ def _drill_hole_group(board, view_box, edge_bounds, svg_offset=(0, 0)):
 
     group = ET.Element("{%s}g" % SVG_NS, {
         "class": "drill-hole-mask",
-        "fill": "#ffffff",
+        "fill": DRILL_HOLE_COLOR,
         "stroke": "none",
         "pointer-events": "none",
     })
@@ -487,6 +468,81 @@ def _xml_number(value):
     return ("%.5f" % value).rstrip("0").rstrip(".") or "0"
 
 
+def _part_viewer_data(board, copper, map_point):
+    parts = []
+    hit_boxes = []
+    for index, footprint in enumerate(board.GetFootprints()):
+        reference = _as_text(_call(footprint, ("GetReference",), ""))
+        value = _as_text(_call(footprint, ("GetValue",), ""))
+
+        try:
+            # Exclude reference/value fields so their labels do not enlarge the
+            # clickable body area for a footprint.
+            bounds = footprint.GetBoundingBox(False)
+        except (AttributeError, TypeError):
+            # Keep compatibility with pcbnew builds that only expose the
+            # no-argument overload.
+            bounds = _call(footprint, ("GetBoundingBox",), None)
+        if bounds is not None:
+            left = _mm(_call(bounds, ("GetLeft",), 0))
+            top = _mm(_call(bounds, ("GetTop",), 0))
+            right = _mm(_call(bounds, ("GetRight",), 0))
+            bottom = _mm(_call(bounds, ("GetBottom",), 0))
+        else:
+            position = _point(footprint.GetPosition())
+            left = right = position[0]
+            top = bottom = position[1]
+        if right <= left or bottom <= top:
+            center = _point(footprint.GetPosition())
+            left, right = center[0] - 0.6, center[0] + 0.6
+            top, bottom = center[1] - 0.6, center[1] + 0.6
+        if right - left < 1.2:
+            center_x = (left + right) / 2
+            left, right = center_x - 0.6, center_x + 0.6
+        if bottom - top < 1.2:
+            center_y = (top + bottom) / 2
+            top, bottom = center_y - 0.6, center_y + 0.6
+        x, y = map_point((left, top))
+        hit_right, hit_bottom = map_point((right, bottom))
+
+        pads = []
+        for pad in footprint.Pads():
+            pad_x, pad_y = map_point(pad.GetPosition())
+            size = pad.GetSize()
+            shape = _call(pad, ("GetShape",), None)
+            if shape == getattr(pcbnew, "PAD_SHAPE_CIRCLE", object()):
+                shape_name = "circle"
+            elif shape == getattr(pcbnew, "PAD_SHAPE_OVAL", object()):
+                shape_name = "oval"
+            else:
+                shape_name = "rect"
+            active_layers = []
+            for layer_id, layer_name in copper.items():
+                try:
+                    if pad.IsOnLayer(layer_id):
+                        active_layers.append(layer_name)
+                except Exception:
+                    continue
+            pads.append({
+                "number": _as_text(_call(pad, ("GetNumber",), "")),
+                "x": pad_x,
+                "y": pad_y,
+                "width": max(_mm(size.x), 0.2),
+                "height": max(_mm(size.y), 0.2),
+                "shape": shape_name,
+                "angle": float(_call(pad, ("GetOrientationDegrees",), 0) or 0),
+                "layers": active_layers,
+            })
+        parts.append({
+            "reference": reference,
+            "value": value,
+            "box": {"x": x, "y": y, "right": hit_right, "bottom": hit_bottom},
+            "pads": pads,
+        })
+        hit_boxes.append((index, reference, value, x, y, hit_right, hit_bottom))
+    return parts, hit_boxes
+
+
 def _zone_fill_group(zone_fills, layer_name, view_box, edge_bounds, svg_offset=(0, 0)):
     vx, vy, _, _ = view_box
     min_x, min_y, _, _ = edge_bounds
@@ -606,10 +662,16 @@ def _make_overlay(board, layer_definitions, view_box, edge_bounds, zone_fills, s
                     continue
                 parent = group_for(code, layer_id)
                 if shape == circle_shape or shape == oval_shape:
-                    ET.SubElement(parent, "{%s}ellipse" % SVG_NS, {
+                    attrs = {
                         "class": "pad-highlight", "cx": _xml_number(x), "cy": _xml_number(y),
                         "rx": _xml_number(width / 2), "ry": _xml_number(height / 2),
-                    })
+                    }
+                    if shape == oval_shape and abs(width - height) > 0.001:
+                        angle = float(_call(pad, ("GetOrientationDegrees",), 0) or 0)
+                        if angle:
+                            attrs["transform"] = "rotate(%s %s %s)" % (
+                                _xml_number(-angle), _xml_number(x), _xml_number(y))
+                    ET.SubElement(parent, "{%s}ellipse" % SVG_NS, attrs)
                 else:
                     angle = float(_call(pad, ("GetOrientationDegrees",), 0) or 0)
                     ET.SubElement(parent, "{%s}rect" % SVG_NS, {
@@ -709,7 +771,19 @@ def _make_overlay(board, layer_definitions, view_box, edge_bounds, zone_fills, s
             })
             for shape in list(source_group):
                 group.append(shape)
-    return root, counts
+    parts, hit_boxes = _part_viewer_data(board, copper, map_point)
+    hit_layer = ET.SubElement(root, "{%s}g" % SVG_NS, {"class": "part-hit-layer"})
+    for index, reference, value, left, top, right, bottom in hit_boxes:
+        label = reference + (" · " + value if value else "")
+        hit_box = ET.SubElement(hit_layer, "{%s}rect" % SVG_NS, {
+            "class": "part-hit",
+            "data-part-id": str(index),
+            "x": _xml_number(left), "y": _xml_number(top),
+            "width": _xml_number(right - left), "height": _xml_number(bottom - top),
+            "role": "button", "tabindex": "0", "aria-label": "Select part " + label,
+        })
+        ET.SubElement(hit_box, "{%s}title" % SVG_NS).text = label
+    return root, counts, parts
 
 
 def _net_data(board, counts):
@@ -732,7 +806,7 @@ def _net_data(board, counts):
     return nets
 
 
-def _document(board_name, revision, issue_date, layer_data, nets, svg_roots, overlay, edge_bounds, drill_origin_svg):
+def _document(board_name, revision, issue_date, layer_data, nets, parts, svg_roots, overlay, edge_bounds, drill_origin_svg):
     template = (ASSET_DIR / "viewer.html").read_text(encoding="utf-8")
     css = (ASSET_DIR / "viewer.css").read_text(encoding="utf-8")
     js = (ASSET_DIR / "viewer.js").read_text(encoding="utf-8")
@@ -745,7 +819,7 @@ def _document(board_name, revision, issue_date, layer_data, nets, svg_roots, ove
     board_meta = " · ".join(metadata)
     left, top, right, bottom = edge_bounds
     board_bounds_mm = {"left": left, "top": top, "right": right, "bottom": bottom}
-    data = json.dumps({"board": board_name, "layers": layer_data, "nets": nets,
+    data = json.dumps({"board": board_name, "layers": layer_data, "nets": nets, "parts": parts,
                        "board_bounds_mm": board_bounds_mm,
                        "drill_origin_svg": drill_origin_svg}, ensure_ascii=False, separators=(",", ":"))
     data = data.replace("&", "\\u0026").replace("<", "\\u003c").replace(">", "\\u003e")
@@ -771,7 +845,7 @@ def _document(board_name, revision, issue_date, layer_data, nets, svg_roots, ove
 def export_board(board, board_path, output_path):
     board_text = Path(board_path).read_text(encoding="utf-8", errors="replace")
     layers = _layer_definitions(board_path)
-    zone_fills = _zone_fills_from_board_text(board_text)
+    zone_fills = _zone_fills_from_board(board, layers)
     # Fabrication layers add labels and assembly dimensions that are not useful
     # in the interactive layout view. Keep them out of both the SVG export and
     # the viewer's layer controls.
@@ -834,10 +908,10 @@ def export_board(board, board_path, output_path):
             drill_mask = _drill_hole_group(board, view_box, edge_bounds, svg_offset)
             if drill_mask is not None:
                 svg_root.append(drill_mask)
-        overlay, counts = _make_overlay(board, layers, view_box, edge_bounds, zone_fills, svg_offset)
+        overlay, counts, parts = _make_overlay(board, layers, view_box, edge_bounds, zone_fills, svg_offset)
         nets = _net_data(board, counts)
         layer_data = [{"name": name, "color": _color_for_layer(name), "visible": _initial_visibility(name)} for name in layer_names]
-        document = _document(Path(board_path).stem, revision, issue_date, layer_data, nets,
+        document = _document(Path(board_path).stem, revision, issue_date, layer_data, nets, parts,
                              svg_roots, overlay, edge_bounds, drill_origin_svg)
         Path(output_path).write_text(document, encoding="utf-8")
 
@@ -846,7 +920,7 @@ class ExportInteractiveLayout(pcbnew.ActionPlugin):
     def defaults(self):
         self.name = "Export interactive HTML layout"
         self.category = "KiCad Layout Viewer"
-        self.description = "Export all PCB layers and clickable net highlights to one offline HTML file"
+        self.description = "Export all PCB layers with clickable parts and net highlights to one offline HTML file"
         self.show_toolbar_button = False
 
     def Run(self):
