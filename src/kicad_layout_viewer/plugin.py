@@ -374,7 +374,8 @@ def _drill_hole_group(board, view_box, edge_bounds, svg_offset=(0, 0)):
 
     for item in board.GetTracks():
         if "VIA" not in item.__class__.__name__.upper() and not (
-                hasattr(item, "GetTopLayer") and hasattr(item, "GetBottomLayer")):
+                (hasattr(item, "GetTopLayer") and hasattr(item, "GetBottomLayer"))
+                or (hasattr(item, "TopLayer") and hasattr(item, "BottomLayer"))):
             continue
         drill = _call(item, ("GetDrill",), 0)
         diameter = _mm(drill) if drill else 0
@@ -429,7 +430,8 @@ def _svg_coordinate_offset(svg_root, board, edge_bounds):
             candidates.append((x, y))
     for item in board.GetTracks():
         if "VIA" in item.__class__.__name__.upper() or (
-                hasattr(item, "GetTopLayer") and hasattr(item, "GetBottomLayer")):
+                (hasattr(item, "GetTopLayer") and hasattr(item, "GetBottomLayer"))
+                or (hasattr(item, "TopLayer") and hasattr(item, "BottomLayer"))):
             candidates.append(_point(item.GetPosition()))
 
     deltas_x, deltas_y = [], []
@@ -623,10 +625,12 @@ def _make_overlay(board, layer_definitions, view_box, edge_bounds, zone_fills, s
             continue
         layer_id = int(_call(item, ("GetLayer",), -1))
         class_name = item.__class__.__name__.upper()
-        is_via = "VIA" in class_name or (hasattr(item, "GetTopLayer") and hasattr(item, "GetBottomLayer"))
+        is_via = "VIA" in class_name or (
+            (hasattr(item, "GetTopLayer") and hasattr(item, "GetBottomLayer"))
+            or (hasattr(item, "TopLayer") and hasattr(item, "BottomLayer")))
         if is_via:
-            top = int(_call(item, ("GetTopLayer",), layer_id))
-            bottom = int(_call(item, ("GetBottomLayer",), layer_id))
+            top = int(_call(item, ("GetTopLayer", "TopLayer"), layer_id))
+            bottom = int(_call(item, ("GetBottomLayer", "BottomLayer"), layer_id))
             active_layers = [number for number in copper if min(top, bottom) <= number <= max(top, bottom)]
             x, y = map_point(item.GetPosition())
             try:

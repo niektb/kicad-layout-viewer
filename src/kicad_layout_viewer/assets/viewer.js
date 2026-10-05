@@ -28,10 +28,6 @@
   const netList = $("#net-list");
   const stack = $("#board-stack");
   const canvas = $("#canvas");
-  const gridOverlay = document.createElement("div");
-  gridOverlay.className = "grid-overlay";
-  gridOverlay.setAttribute("aria-hidden", "true");
-  canvas.prepend(gridOverlay);
   const commentTooltip = document.createElement("div");
   commentTooltip.className = "comment-tooltip";
   commentTooltip.hidden = true;
@@ -191,47 +187,16 @@
   let originalViewBox = (layerSvgs[0] || overlay).getAttribute("viewBox").split(/[ ,]+/).map(Number);
   let viewBox = [...originalViewBox];
   // Comment storage remains in board coordinates internally; present and
-  // exchange coordinates relative to KiCad's drill origin.
+  // exchange coordinates relative to KiCad's drill origin with Y positive up.
   const drillOriginBoard = {
     x: boardBounds.left + drillOriginSvg.x - originalViewBox[0],
     y: boardBounds.top + drillOriginSvg.y - originalViewBox[1],
   };
   let pointer = null;
-  let gridScale = 0;
-
-  function syncGrid() {
-    const canvasRect = canvas.getBoundingClientRect();
-    const stackRect = stack.getBoundingClientRect();
-    if (!canvasRect.width || !canvasRect.height || !viewBox[2] || !viewBox[3]) return;
-
-    // SVG coordinates map one-to-one to millimeters in the exported board.
-    const scale = Math.min(stackRect.width / viewBox[2], stackRect.height / viewBox[3]);
-    const letterboxX = (stackRect.width - viewBox[2] * scale) / 2;
-    const letterboxY = (stackRect.height - viewBox[3] * scale) / 2;
-    let originX = stackRect.left - canvasRect.left + letterboxX
-      + (drillOriginSvg.x - viewBox[0]) * scale;
-    const originY = stackRect.top - canvasRect.top + letterboxY
-      + (drillOriginSvg.y - viewBox[1]) * scale;
-    if (bottomView) {
-      originX = stackRect.left - canvasRect.left + stackRect.width - letterboxX
-        - (drillOriginSvg.x - viewBox[0]) * scale;
-    }
-
-    // Keep the 1 mm grid on its own composited layer so panning only moves it.
-    const phaseX = ((originX + scale / 2) % scale + scale) % scale;
-    const phaseY = ((originY + scale / 2) % scale + scale) % scale;
-    if (scale !== gridScale) {
-      gridOverlay.style.setProperty("--grid-size", `${scale}px`);
-      gridOverlay.style.setProperty("--grid-overscan", `${-scale}px`);
-      gridScale = scale;
-    }
-    gridOverlay.style.transform = `translate3d(${phaseX}px, ${phaseY}px, 0)`;
-  }
 
   function syncViewBox() {
     const value = viewBox.join(" ");
     [...layerSvgs, overlay, commentOverlay].forEach((svg) => svg.setAttribute("viewBox", value));
-    syncGrid();
   }
 
   function boardToSvg(point) {
@@ -256,7 +221,7 @@
 
   function formatCoordinate(point) {
     const x = point.x - drillOriginBoard.x;
-    const y = point.y - drillOriginBoard.y;
+    const y = drillOriginBoard.y - point.y;
     return `X ${x.toFixed(3)} mm · Y ${y.toFixed(3)} mm`;
   }
 
@@ -626,8 +591,12 @@
       if (imported.coordinate_origin && imported.coordinate_origin !== "drill" && imported.coordinate_origin !== "board") {
         throw new Error("This comments file uses an unsupported coordinate origin.");
       }
+      if (imported.coordinate_y_axis && imported.coordinate_y_axis !== "up" && imported.coordinate_y_axis !== "down") {
+        throw new Error("This comments file uses an unsupported Y axis direction.");
+      }
       if (imported.board && imported.board !== data.board && !window.confirm(`This file is for ${imported.board}, while the current board is ${data.board}. Import comments using their millimeter coordinates anyway?`)) return;
       const usesDrillOrigin = imported.coordinate_origin === "drill";
+      const yAxisIsUp = imported.coordinate_y_axis === "up";
       const byId = new Map(comments.map((comment) => [comment.id, comment]));
       let skipped = Math.max(0, imported.comments.length - 2000);
       imported.comments.slice(0, 2000).forEach((raw) => {
@@ -641,7 +610,7 @@
         byId.set(id, {
           id,
           x: x + (usesDrillOrigin ? drillOriginBoard.x : 0),
-          y: y + (usesDrillOrigin ? drillOriginBoard.y : 0),
+          y: (yAxisIsUp ? -y : y) + (usesDrillOrigin ? drillOriginBoard.y : 0),
           text,
           status,
           created_at: raw.created_at || new Date().toISOString(),
@@ -664,10 +633,11 @@
       board: data.board,
       units: "mm",
       coordinate_origin: "drill",
+      coordinate_y_axis: "up",
       comments: comments.map(({ id, x, y, text, status, created_at, updated_at }) => ({
         id,
         x: Number((x - drillOriginBoard.x).toFixed(4)),
-        y: Number((y - drillOriginBoard.y).toFixed(4)),
+        y: Number((drillOriginBoard.y - y).toFixed(4)),
         text,
         status: status || "open",
         created_at,
@@ -755,7 +725,6 @@
     layerOrder.splice(0, layerOrder.length, ...flippedOrder);
     layerOrder.forEach((layerName) => layerList.append(rowByLayer.get(layerName)));
     stack.classList.toggle("is-bottom-view", bottomView);
-    syncGrid();
     event.currentTarget.setAttribute("aria-pressed", String(bottomView));
     event.currentTarget.textContent = bottomView ? "View top" : "View bottom";
     event.currentTarget.title = bottomView ? "Return to the top side" : "Flip the board to view from the bottom";
@@ -794,7 +763,6 @@
     setPlacementMode(false);
     bottomView = false;
     stack.classList.remove("is-bottom-view");
-    syncGrid();
     const flipButton = $("#flip-board");
     flipButton.setAttribute("aria-pressed", "false");
     flipButton.textContent = "View bottom";
@@ -844,8 +812,6 @@
   canvas.addEventListener("pointerup", () => { pointer = null; });
   canvas.addEventListener("pointercancel", () => { pointer = null; });
   canvas.addEventListener("contextmenu", (event) => event.preventDefault());
-  const canvasResizeObserver = new ResizeObserver(syncGrid);
-  canvasResizeObserver.observe(canvas);
   syncViewBox();
   renderComments();
   updateLayers();

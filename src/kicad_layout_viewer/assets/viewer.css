@@ -107,7 +107,6 @@
 .comment-marker circle{fill:#a78bda;stroke:#ece4ff;stroke-width:.12;filter:none}
 .comment-marker:hover circle,.comment-marker:focus circle,.comment-marker:active circle{fill:#c3a8f3;stroke:#ece4ff;stroke-width:.45}
 .canvas{background-image:none;background-size:auto;background-position:0 0}
-.grid-overlay{position:absolute;inset:var(--grid-overscan,-18px);pointer-events:none;background-image:radial-gradient(circle at 50% 50%,#28313b 1px,transparent 1px);background-size:var(--grid-size,18px) var(--grid-size,18px);transform-origin:0 0;will-change:transform}
 .comment-tooltip{position:absolute;z-index:8;max-width:min(320px,calc(100% - 20px));max-height:min(220px,calc(100% - 20px));overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;padding:8px 10px;background:#202833;border:1px solid #9d87c8;border-radius:6px;box-shadow:0 6px 20px #0009;color:#edf0f6;font-size:12px;line-height:1.4;pointer-events:none;transform:translate(-50%,-100%)}
 .comment-tooltip.is-below{transform:translate(-50%,0)}
 .comment-tooltip[hidden]{display:none}
@@ -126,7 +125,6 @@ body.light-theme .search,body.light-theme .comment-dialog textarea{background:#f
 body.light-theme .net-row[aria-pressed="true"]{background:#e2edf3;border-color:#afc2ce}
 body.light-theme .statusbar #selection-status{color:#34495b}
 body.light-theme .canvas{background-color:#f6f8fa}
-body.light-theme .grid-overlay{background-image:radial-gradient(circle at 50% 50%,#c6d0d9 1px,transparent 1px)}
 body.light-theme .toolbar button[aria-pressed="true"],body.light-theme #toggle-comments[aria-pressed="true"]{border-color:#7aa4ba;background:#dcecf4;color:#245a73;box-shadow:inset 0 0 0 1px #7aa4ba55}
 body.light-theme .comment-tooltip{background:#fff;border-color:#9078b4;box-shadow:0 6px 20px #25304333;color:#263342}
 body.light-theme .comment-dialog::backdrop{background:#25304355}
@@ -138,3 +136,5 @@ body.light-theme .layer-row input,body.light-theme .zone-transparency-control in
 body.light-theme .primary-button{border-color:#286b8c;background:#286b8c;color:#fff}
 body.light-theme .danger-button{border-color:#c77d7d;color:#9b3333}
 body.light-theme .drill-hole-mask{fill:#111;stroke:none}
+/* Let transparent inactive net groups pass hit testing to their explicit geometry. */
+.net-overlay [data-net-id]{pointer-events:none}
