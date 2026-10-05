@@ -779,7 +779,9 @@
   canvas.addEventListener("wheel", (event) => {
     event.preventDefault();
     const rect = canvas.getBoundingClientRect();
-    const px = (event.clientX - rect.left) / rect.width;
+    const screenX = (event.clientX - rect.left) / rect.width;
+    // Bottom view mirrors the board stack, so map the cursor back to board-space X.
+    const px = bottomView ? 1 - screenX : screenX;
     const py = (event.clientY - rect.top) / rect.height;
     const factor = event.deltaY < 0 ? 0.86 : 1.16;
     const nextWidth = viewBox[2] * factor;
