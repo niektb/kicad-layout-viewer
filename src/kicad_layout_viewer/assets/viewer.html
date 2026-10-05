@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{TITLE}}</title>
+  <style>{{CSS}}</style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="mark">K</span><div><strong>KiCad Layout Viewer</strong><small>{{BOARD_NAME}}</small><small class="board-meta">{{BOARD_META}}</small></div></div>
+    <div class="toolbar">
+      <button id="fit-board" type="button" title="Fit board to view">Fit</button>
+      <button id="reset-view" type="button" title="Restore initial board view, layers, order, net selection, and zone transparency">Reset</button>
+      <button id="flip-board" type="button" aria-pressed="false" title="Flip the board to view from the bottom">View bottom</button>
+      <button id="toggle-comment-panel" type="button" aria-controls="comments-panel" aria-expanded="false" aria-pressed="false">Comments</button>
+      <button id="toggle-theme" type="button" aria-pressed="false" title="Switch to light mode">Light mode</button>
+    </div>
+  </header>
+  <main class="app">
+    <aside class="sidebar">
+      <section class="section layers-section">
+        <div class="section-heading"><h2>Layers <small class="order-hint">drag to reorder · top first</small></h2><div class="small-actions"><button id="show-all-layers" type="button">All</button><button id="hide-all-layers" type="button">None</button></div></div>
+        <label class="zone-transparency-control" for="zone-transparency">
+          <span>Copper zone transparency</span>
+          <span id="zone-transparency-value" class="zone-transparency-value">66%</span>
+          <input id="zone-transparency" type="range" min="0" max="100" step="1" value="66" aria-label="Copper zone transparency">
+        </label>
+        <div id="layer-list" class="layer-list"></div>
+      </section>
+      <section class="section nets-section">
+        <div class="section-heading"><h2>Nets</h2><span id="net-count" class="count"></span></div>
+        <input id="net-search" class="search" type="search" placeholder="Filter nets…" aria-label="Filter nets">
+        <div id="net-list" class="net-list"></div>
+      </section>
+      <footer class="sidebar-footer">{{SUMMARY}}</footer>
+    </aside>
+    <section class="workspace" aria-label="Board layout">
+      <div id="placement-banner" class="placement-banner" role="status" aria-live="polite" hidden>
+        <span>Click a board position to add a comment. Press Esc or Cancel to stop.</span>
+        <button id="cancel-placement" type="button">Cancel</button>
+      </div>
+      <div class="canvas" id="canvas">
+        <div class="board-stack" id="board-stack">{{SVG_LAYERS}}{{NET_OVERLAY}}</div>
+        <div id="empty-state" class="empty-state" hidden>Select at least one layer to view the board.</div>
+      </div>
+      <div class="statusbar"><span id="selection-status">No net selected</span><span id="interaction-hint">Scroll to zoom · Right-click and drag to pan · Click multiple nets to highlight</span></div>
+    </section>
+    <aside id="comments-panel" class="comments-panel" aria-label="Board comments" hidden>
+      <div class="section-heading"><h2>Comments</h2><span id="comment-count" class="count">0</span></div>
+      <div class="comment-actions">
+        <button id="add-comment" type="button" aria-pressed="false">Add comment</button>
+        <button id="toggle-comments" type="button" aria-pressed="true">Hide markers</button>
+        <button id="import-comments" type="button">Import</button>
+        <button id="export-comments" type="button">Export</button>
+        <input id="comments-file" type="file" accept=".json,application/json" hidden>
+      </div>
+      <div id="comment-list" class="comment-list"></div>
+    </aside>
+  </main>
+  <dialog id="comment-dialog" class="comment-dialog">
+    <form id="comment-form" method="dialog">
+      <h2 id="comment-dialog-title">Add comment</h2>
+      <p id="comment-coordinate" class="comment-coordinate"></p>
+      <label for="comment-text">Comment</label>
+      <textarea id="comment-text" maxlength="4000" required rows="5"></textarea>
+      <div class="comment-dialog-actions">
+        <button id="delete-comment" class="danger-button" type="button" hidden>Delete</button>
+        <span></span>
+        <button id="cancel-comment" type="button">Cancel</button>
+        <button class="primary-button" type="submit">Save</button>
+      </div>
+    </form>
+  </dialog>
+  <script id="viewer-data" type="application/json">{{DATA}}</script>
+  <script>{{JS}}</script>
+</body>
+</html>
