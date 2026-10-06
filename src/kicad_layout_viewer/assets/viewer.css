@@ -140,10 +140,6 @@
 @media(max-width:760px){.viewer-credit{display:none}}
 .brand strong{font-size:16px}
 .brand .board-meta{font-size:12px;line-height:1.2}
-.mark{background:#203d49;color:#82e0cf}
-.mark svg{display:block;width:23px;height:23px;overflow:visible}
-.mark svg path{fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
-.mark svg circle,.mark svg rect{fill:#f0b85a;stroke:#203d49;stroke-width:1.2}
 .comment-marker.is-dragging{cursor:grabbing}
 .net-group.is-active{opacity:.62}
 .net-group .net-highlight,.net-group .pad-highlight,.net-group .zone-highlight{opacity:1}
