@@ -8,14 +8,14 @@
 </head>
 <body>
   <header class="topbar">
-    <div class="brand"><span class="mark">K</span><div><strong>KiCad Layout Viewer</strong><small>{{BOARD_NAME}}</small><small class="board-meta">{{BOARD_META}}</small></div></div>
+    <div class="brand"><span class="mark" aria-hidden="true"><svg viewBox="0 0 32 32" focusable="false"><path d="M7 7v7h8v11h10"/><path d="M15 14h10V7"/><circle cx="7" cy="7" r="2.5"/><circle cx="25" cy="7" r="2.5"/><rect x="22.5" y="22.5" width="5" height="5" rx="1"/></svg></span><div><strong>KiCad Layout Viewer</strong><small>{{BOARD_NAME}}</small><small class="board-meta">{{BOARD_META}}</small></div></div>
     <div class="toolbar">
-      <span class="viewer-credit">Viewer designed by Niek ten Brinke</span>
+      <span class="viewer-credit">Viewer designed by Niek ten Brinke · v{{VIEWER_VERSION}}</span>
       <button id="fit-board" type="button" title="Fit board to view">Fit</button>
       <button id="reset-view" type="button" title="Restore initial board view, layers, order, net selection, and zone transparency">Reset</button>
+      <button id="clear-highlights" type="button" title="Clear selected nets and parts">Clear highlights</button>
       <button id="flip-board" type="button" aria-pressed="false" title="Flip the board to view from the bottom">View bottom</button>
       <button id="toggle-comment-panel" type="button" aria-controls="comments-panel" aria-expanded="false" aria-pressed="false">Comments</button>
-      <button id="toggle-theme" type="button" aria-pressed="false" title="Switch to light mode">Light mode</button>
     </div>
   </header>
   <main class="app">
@@ -56,7 +56,7 @@
       <div class="section-heading"><h2>Comments</h2><span id="comment-count" class="count">0</span></div>
       <div class="comment-actions">
         <button id="add-comment" type="button" aria-pressed="false">Add comment</button>
-        <button id="toggle-comments" type="button" aria-pressed="true">Hide markers</button>
+      <button id="toggle-comments" type="button" aria-pressed="false">Hide markers</button>
         <button id="import-comments" type="button">Import</button>
         <button id="export-comments" type="button">Export</button>
         <input id="comments-file" type="file" accept=".json,application/json" hidden>

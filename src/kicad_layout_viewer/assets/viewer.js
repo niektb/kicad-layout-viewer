@@ -5,26 +5,6 @@
   const nets = data.nets;
   const parts = data.parts || [];
   const $ = (selector) => document.querySelector(selector);
-  const themeButton = $("#toggle-theme");
-  const themeStorageKey = "kicad-layout-viewer:theme:v1";
-  let lightTheme = false;
-  try {
-    lightTheme = window.localStorage.getItem(themeStorageKey) === "light";
-  } catch {}
-  function applyViewerTheme(isLight, savePreference = false) {
-    lightTheme = isLight;
-    document.body.classList.toggle("light-theme", lightTheme);
-    themeButton.textContent = lightTheme ? "Dark mode" : "Light mode";
-    themeButton.setAttribute("aria-pressed", String(lightTheme));
-    themeButton.title = lightTheme ? "Switch to dark mode" : "Switch to light mode";
-    updateBoardPalette(lightTheme);
-    if (savePreference) {
-      try {
-        window.localStorage.setItem(themeStorageKey, lightTheme ? "light" : "dark");
-      } catch {}
-    }
-  }
-  themeButton.addEventListener("click", () => applyViewerTheme(!lightTheme, true));
   const layerList = $("#layer-list");
   const netList = $("#net-list");
   const partList = $("#part-list");
@@ -41,8 +21,6 @@
   const svgByLayer = new Map(layerSvgs.map((svg) => [svg.dataset.layer, svg]));
   const layerByName = new Map(layers.map((layer) => [layer.name, layer]));
   const overlay = $(".net-overlay");
-  const originalLayerPaint = new WeakMap();
-  const lightNetPalette = ["#945f00", "#006783", "#a83f2b", "#4d7018", "#70509a", "#923a69", "#17634e", "#92500e"];
   const netById = new Map(nets.map((net, index) => [String(net.code), { net, index }]));
   function zoneRings(geometry) {
     if (geometry.zoneRings) return geometry.zoneRings;
@@ -110,9 +88,11 @@
     const strokeHit = geometry.matches(".net-highlight, .pad-highlight") && geometry.isPointInStroke(point);
     return fillHit || strokeHit;
   }
-  function choosePartAtPoint(partTarget, screenPoint) {
+  function choosePartAtPoint(partTarget, screenPoint, allowOppositeSide = false) {
+    const viewedSide = bottomView ? "B" : "F";
     const matrix = overlay.getScreenCTM();
     if (!matrix) {
+      if (!allowOppositeSide && partTarget.dataset.side && partTarget.dataset.side !== viewedSide) return false;
       choosePart(partTarget.dataset.partId);
       return true;
     }
@@ -120,27 +100,42 @@
     const candidates = parts.map((part, id) => ({ part, id })).filter(({ part }) =>
       point.x >= part.box.x && point.x <= part.box.right
       && point.y >= part.box.y && point.y <= part.box.bottom
-    ).sort((a, b) =>
+    );
+    const bySmallestBox = (a, b) => (
       (a.part.box.right - a.part.box.x) * (a.part.box.bottom - a.part.box.y)
       - (b.part.box.right - b.part.box.x) * (b.part.box.bottom - b.part.box.y)
     );
-    if (!candidates.length) return false;
-    choosePart(candidates[0].id);
+    const viewedCandidates = candidates
+      .filter(({ part }) => !part.side || part.side === viewedSide)
+      .sort(bySmallestBox);
+    const oppositeCandidates = allowOppositeSide
+      ? candidates.filter(({ part }) => part.side && part.side !== viewedSide).sort(bySmallestBox)
+      : [];
+    const candidate = viewedCandidates[0] || oppositeCandidates[0];
+    if (!candidate) return false;
+    choosePart(candidate.id);
     return true;
   }
-  function resolveZoneClickStack(event, zoneTarget, screenPoint) {
+  function resolveBoardClickStack(event, zoneTarget, screenPoint) {
     const visited = new Set();
     const candidates = document.elementsFromPoint(event.clientX, event.clientY);
-    let partTarget = null;
+    let viewedPartTarget = null;
+    let oppositePartTarget = null;
     let zoneGroup = null;
+    const viewedSide = bottomView ? "B" : "F";
     for (const element of candidates) {
       const target = element.closest?.(".part-hit, .zone-highlight, .pad-highlight, .via-highlight, .net-highlight");
       if (!target || !overlay.contains(target) || visited.has(target)) continue;
       visited.add(target);
       if (target.matches(".part-hit")) {
-        partTarget ||= target;
+        if (!target.dataset.side || target.dataset.side === viewedSide) {
+          viewedPartTarget ||= target;
+        } else {
+          oppositePartTarget ||= target;
+        }
         continue;
       }
+      if (target.closest(".net-layer")?.classList.contains("layer-hidden")) continue;
       if (target.matches(".zone-highlight")) {
         if (Number(zoneTransparencyInput.value) < 100 && geometryHitAtScreenPoint(target, screenPoint)) {
           zoneGroup ||= target.closest("[data-net-id]");
@@ -154,10 +149,10 @@
         return true;
       }
     }
-    if (partTarget && choosePartAtPoint(partTarget, screenPoint)) {
+    if (viewedPartTarget && choosePartAtPoint(viewedPartTarget, screenPoint)) {
       return true;
     }
-    if (!zoneGroup && Number(zoneTransparencyInput.value) < 100
+    if (!zoneGroup && zoneTarget && Number(zoneTransparencyInput.value) < 100
         && geometryHitAtScreenPoint(zoneTarget, screenPoint)) {
       zoneGroup = zoneTarget.closest("[data-net-id]");
     }
@@ -165,77 +160,10 @@
       chooseNet(zoneGroup.dataset.netId);
       return true;
     }
-    return false;
-  }
-  function lightLayerColor(name) {
-    if (name.endsWith(".SilkS")) return "#51482f";
-    if (name.endsWith(".Cu")) {
-      return ({ "F.Cu": "#864526", "B.Cu": "#3d5b76", "In1.Cu": "#405f4e", "In2.Cu": "#614a70" })[name] || "#705c37";
+    if (oppositePartTarget && choosePartAtPoint(oppositePartTarget, screenPoint, true)) {
+      return true;
     }
-    if (name.includes("Mask")) return "#405849";
-    if (name.includes("Paste")) return "#62566d";
-    if (name === "Edge.Cuts") return "#756a3d";
-    if (name.includes("Fab")) return "#4b5c6c";
-    if (name.includes("CrtYd")) return "#75494d";
-    return "#4b5662";
-  }
-  function isVisiblePaint(value) {
-    const normalized = (value || "").trim().toLowerCase();
-    return normalized && normalized !== "none" && normalized !== "transparent" && !normalized.startsWith("url(");
-  }
-  function recolorLayerSvg(svg, color, isLight) {
-    svg.querySelectorAll("*").forEach((element) => {
-      if (element.closest(".drill-hole-mask") || element.classList.contains("nonplated-pad-mask")
-          || element.classList.contains("nonplated-hole")
-          || element.matches('circle[fill="#ffffff"]')) return;
-      let original = originalLayerPaint.get(element);
-      if (!original) {
-        original = {
-          fill: element.getAttribute("fill"),
-          stroke: element.getAttribute("stroke"),
-          style: element.getAttribute("style"),
-        };
-        originalLayerPaint.set(element, original);
-      }
-      if (!isLight) {
-        for (const property of ["fill", "stroke"]) {
-          if (original[property] === null) element.removeAttribute(property);
-          else element.setAttribute(property, original[property]);
-        }
-        if (original.style === null) element.removeAttribute("style");
-        else element.setAttribute("style", original.style);
-        return;
-      }
-      for (const property of ["fill", "stroke"]) {
-        if (isVisiblePaint(original[property])) element.setAttribute(property, color);
-      }
-      if (original.style !== null) {
-        element.setAttribute("style", original.style);
-        for (const property of ["fill", "stroke"]) {
-          if (isVisiblePaint(element.style.getPropertyValue(property))) element.style.setProperty(property, color);
-        }
-      }
-    });
-  }
-  function updateBoardPalette(isLight) {
-    if (typeof layerSvgs === "undefined") return;
-    layerSvgs.forEach((svg) => {
-      const layer = layerByName.get(svg.dataset.layer);
-      if (!layer) return;
-      const color = isLight ? lightLayerColor(layer.name) : layer.color;
-      recolorLayerSvg(svg, color, isLight);
-      const swatch = rowByLayer.get(layer.name)?.querySelector(".layer-swatch");
-      if (swatch) swatch.style.background = color;
-    });
-    overlay.querySelectorAll(".net-group").forEach((group) => {
-      const entry = netById.get(group.dataset.netId);
-      if (entry) group.style.setProperty("--net-color", isLight ? lightNetPalette[entry.index % lightNetPalette.length] : entry.net.color);
-    });
-    netList.querySelectorAll(".net-row").forEach((row) => {
-      const entry = netById.get(row.dataset.netId);
-      const dot = row.querySelector(".net-dot");
-      if (entry && dot) dot.style.background = isLight ? lightNetPalette[entry.index % lightNetPalette.length] : entry.net.color;
-    });
+    return false;
   }
   const zoneTransparencyInput = $("#zone-transparency");
   const zoneTransparencyValue = $("#zone-transparency-value");
@@ -307,31 +235,43 @@
   const commentMarkerById = new Map();
   const boardBounds = data.board_bounds_mm;
   const drillOriginSvg = data.drill_origin_svg || { x: 0, y: 0 };
+  const svgCoordinateOffset = data.svg_coordinate_offset || { x: 0, y: 0 };
   let commentsVisible = true;
   let placingComment = false;
   let draftPoint = null;
   let editingCommentId = null;
   let bottomView = false;
   let originalViewBox = (layerSvgs[0] || overlay).getAttribute("viewBox").split(/[ ,]+/).map(Number);
-  let viewBox = [...originalViewBox];
+  let viewBox = fittedViewBox();
   // Comment storage remains in board coordinates internally; present and
   // exchange coordinates relative to KiCad's drill origin with Y positive up.
   const drillOriginBoard = {
-    x: boardBounds.left + drillOriginSvg.x - originalViewBox[0],
-    y: boardBounds.top + drillOriginSvg.y - originalViewBox[1],
+    x: boardBounds.left + drillOriginSvg.x - originalViewBox[0] - svgCoordinateOffset.x,
+    y: boardBounds.top + drillOriginSvg.y - originalViewBox[1] - svgCoordinateOffset.y,
   };
   let pointer = null;
 
   function syncViewBox() {
     const value = viewBox.join(" ");
     [...layerSvgs, overlay, commentOverlay].forEach((svg) => svg.setAttribute("viewBox", value));
+    syncCommentMarkerSize();
+  }
+
+  function fittedViewBox() {
+    const [x, y, width, height] = originalViewBox;
+    const { width: viewportWidth, height: viewportHeight } = stack.getBoundingClientRect();
+    const scale = Math.min(viewportWidth / width, viewportHeight / height);
+    if (!Number.isFinite(scale) || scale <= 0) return [...originalViewBox];
+
+    const margin = 6 / scale;
+    return [x - margin, y - margin, width + margin * 2, height + margin * 2];
   }
 
   function boardToSvg(point) {
     const [vx, vy] = originalViewBox;
     return {
-      x: vx + point.x - boardBounds.left,
-      y: vy + point.y - boardBounds.top,
+      x: vx + point.x - boardBounds.left + svgCoordinateOffset.x,
+      y: vy + point.y - boardBounds.top + svgCoordinateOffset.y,
     };
   }
 
@@ -342,8 +282,8 @@
     const local = screenPoint.matrixTransform(commentOverlay.getScreenCTM().inverse());
     const [vx, vy] = originalViewBox;
     return {
-      x: boardBounds.left + local.x - vx,
-      y: boardBounds.top + local.y - vy,
+      x: boardBounds.left + local.x - vx - svgCoordinateOffset.x,
+      y: boardBounds.top + local.y - vy - svgCoordinateOffset.y,
     };
   }
 
@@ -366,7 +306,7 @@
     commentOverlay.replaceChildren();
     commentMarkerById.clear();
     commentOverlay.style.visibility = commentsVisible ? "visible" : "hidden";
-    const markerRadius = Math.max(originalViewBox[2], originalViewBox[3]) / 72;
+    const markerRadius = getCommentMarkerRadius();
     comments.forEach((comment, index) => {
       if (comment.status === "completed" || comment.status === "rejected") return;
       const point = boardToSvg(comment);
@@ -384,6 +324,43 @@
       number.setAttribute("font-size", String(markerRadius * 1.1));
       number.textContent = String(index + 1);
       marker.append(circle, number);
+      let commentDrag = null;
+      circle.addEventListener("pointerdown", (event) => {
+        if (event.button !== 0 || placingComment) return;
+        event.preventDefault();
+        event.stopPropagation();
+        commentDrag = {
+          pointerId: event.pointerId,
+          startX: event.clientX,
+          startY: event.clientY,
+          moved: false,
+        };
+        circle.setPointerCapture(event.pointerId);
+        marker.classList.add("is-dragging");
+        hideCommentTooltip();
+      });
+      circle.addEventListener("pointermove", (event) => {
+        if (!commentDrag || commentDrag.pointerId !== event.pointerId) return;
+        if (!commentDrag.moved && Math.hypot(event.clientX - commentDrag.startX, event.clientY - commentDrag.startY) < 4) return;
+        commentDrag.moved = true;
+        const point = screenToBoard(event.clientX, event.clientY);
+        comment.x = Math.min(boardBounds.right, Math.max(boardBounds.left, point.x));
+        comment.y = Math.min(boardBounds.bottom, Math.max(boardBounds.top, point.y));
+        marker.setAttribute("transform", `translate(${boardToSvg(comment).x} ${boardToSvg(comment).y})`);
+      });
+      const finishCommentDrag = (event) => {
+        if (!commentDrag || commentDrag.pointerId !== event.pointerId) return;
+        const moved = commentDrag.moved;
+        commentDrag = null;
+        marker.classList.remove("is-dragging");
+        if (circle.hasPointerCapture(event.pointerId)) circle.releasePointerCapture(event.pointerId);
+        if (moved) {
+          saveComments();
+          renderComments();
+        }
+      };
+      circle.addEventListener("pointerup", finishCommentDrag);
+      circle.addEventListener("pointercancel", finishCommentDrag);
       marker.addEventListener("pointerenter", () => showCommentTooltip(comment, marker));
       marker.addEventListener("pointerleave", hideCommentTooltip);
       marker.addEventListener("focus", () => showCommentTooltip(comment, marker));
@@ -391,7 +368,35 @@
       commentOverlay.append(marker);
       commentMarkerById.set(comment.id, marker);
     });
+    syncCommentMarkerSize();
     syncCommentMarkerText();
+  }
+
+  const COMMENT_MARKER_RADIUS_PX = 15;
+
+  function getCommentMarkerRadius() {
+    const matrix = commentOverlay.getScreenCTM();
+    const scale = matrix ? Math.hypot(matrix.a, matrix.b) : 0;
+    return scale > 0 ? COMMENT_MARKER_RADIUS_PX / scale : Math.max(originalViewBox[2], originalViewBox[3]) / 72;
+  }
+
+  function syncCommentMarkerSize() {
+    const matrix = commentOverlay.getScreenCTM();
+    const scale = matrix ? Math.hypot(matrix.a, matrix.b) : 0;
+    if (!(scale > 0)) return;
+    const radius = COMMENT_MARKER_RADIUS_PX / scale;
+    commentOverlay.querySelectorAll(".comment-marker circle").forEach((circle) => {
+      circle.setAttribute("r", String(radius));
+    });
+    commentOverlay.querySelectorAll(".comment-marker text").forEach((number) => {
+      number.setAttribute("font-size", String(radius * 1.1));
+    });
+  }
+
+  if (typeof ResizeObserver !== "undefined") {
+    new ResizeObserver(syncCommentMarkerSize).observe(stack);
+  } else {
+    window.addEventListener("resize", syncCommentMarkerSize);
   }
 
   function syncCommentMarkerText() {
@@ -542,12 +547,12 @@
     });
     const partHitLayer = overlay.querySelector(":scope > .part-hit-layer");
     if (partHitLayer) overlay.insertBefore(partHitLayer, overlay.firstChild);
+    const selectedPartPads = overlay.querySelector(":scope > .selected-part-pads");
+    if (selectedPartPads) overlay.insertBefore(selectedPartPads, partHitLayer?.nextSibling || overlay.firstChild);
     [...layerOrder].reverse().forEach((name) => {
       const netLayer = [...overlay.children].find((group) => group.dataset.layer === name);
       if (netLayer) overlay.append(netLayer);
     });
-    const selectedPartPads = overlay.querySelector(":scope > .selected-part-pads");
-    if (selectedPartPads) overlay.append(selectedPartPads);
   }
 
   function layerVisible(name) {
@@ -681,6 +686,7 @@
     selectedParts.forEach((part) => {
       const partBox = document.createElementNS("http://www.w3.org/2000/svg", "rect");
       partBox.setAttribute("class", "selected-part-box");
+      if (part.side === "B") partBox.classList.add("bottom-side");
       partBox.setAttribute("x", part.box.x);
       partBox.setAttribute("y", part.box.y);
       partBox.setAttribute("width", part.box.right - part.box.x);
@@ -690,13 +696,17 @@
     });
     selectedParts.forEach((part) => {
       part.pads.forEach((pad) => {
+        const viewedSide = bottomView ? "B" : "F";
         pad.layers.forEach((layerName) => {
-          let layerGroup = layerGroups.get(layerName);
+          const isExternalCopper = layerName === "F.Cu" || layerName === "B.Cu";
+          const displayLayerName = isExternalCopper && part.side && part.side !== viewedSide
+            ? `${viewedSide}.Cu` : layerName;
+          let layerGroup = layerGroups.get(displayLayerName);
           if (!layerGroup) {
             layerGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
             layerGroup.setAttribute("class", "selected-part-pad-layer");
-            layerGroup.dataset.layer = layerName;
-            layerGroups.set(layerName, layerGroup);
+            layerGroup.dataset.layer = displayLayerName;
+            layerGroups.set(displayLayerName, layerGroup);
             group.append(layerGroup);
           }
           const width = pad.width;
@@ -721,6 +731,7 @@
             shape.setAttribute("transform", `rotate(${-pad.angle} ${pad.x} ${pad.y})`);
           }
           shape.setAttribute("class", "selected-part-pad");
+          if (part.side === "B") shape.classList.add("bottom-side");
           layerGroup.append(shape);
         });
       });
@@ -747,6 +758,12 @@
     netList.replaceChildren();
     const query = filter.trim().toLocaleLowerCase();
     const matching = nets.filter((net) => net.name.toLocaleLowerCase().includes(query));
+    matching.sort((a, b) => {
+      const aUnconnected = a.code === 0 || a.name.toLocaleLowerCase().startsWith("unconnected");
+      const bUnconnected = b.code === 0 || b.name.toLocaleLowerCase().startsWith("unconnected");
+      if (aUnconnected !== bUnconnected) return aUnconnected ? 1 : -1;
+      return netNameOrder.compare(a.name, b.name) || Number(a.code) - Number(b.code);
+    });
     $("#net-count").textContent = `${matching.length} / ${nets.length}`;
     matching.forEach((net, index) => {
       const row = document.createElement("button");
@@ -760,6 +777,7 @@
       const name = document.createElement("span");
       name.className = "net-label";
       name.textContent = net.name || "(unnamed)";
+      name.title = net.name || "(unnamed)";
       const meta = document.createElement("span");
       meta.className = "net-meta";
       meta.textContent = `${net.pads.length} pads`;
@@ -769,6 +787,7 @@
     });
   }
 
+  const netNameOrder = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
   const partReferenceOrder = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
   function renderParts(filter = "") {
     partList.replaceChildren();
@@ -828,8 +847,14 @@
   $("#toggle-comments").addEventListener("click", (event) => {
     commentsVisible = !commentsVisible;
     event.currentTarget.textContent = commentsVisible ? "Hide markers" : "Show markers";
-    event.currentTarget.setAttribute("aria-pressed", String(commentsVisible));
+    event.currentTarget.setAttribute("aria-pressed", String(!commentsVisible));
     renderComments();
+  });
+  $("#clear-highlights").addEventListener("click", () => {
+    selectedNets.clear();
+    selectedPartIds.clear();
+    renderSelectedPartPads();
+    renderSelection();
   });
   $("#import-comments").addEventListener("click", () => $("#comments-file").click());
   $("#comments-file").addEventListener("change", async (event) => {
@@ -974,6 +999,7 @@
       seen.add(otherName);
     });
     bottomView = !bottomView;
+    renderSelectedPartPads();
     const flippedOrder = layerOrder.map(oppositeSideLayer);
     layerOrder.splice(0, layerOrder.length, ...flippedOrder);
     layerOrder.forEach((layerName) => layerList.append(rowByLayer.get(layerName)));
@@ -1002,12 +1028,18 @@
       }
     }
     const partTarget = event.target.closest(".part-hit");
-    if (partTarget && choosePartAtPoint(partTarget, screenPoint)) {
-      return;
+    if (partTarget) {
+      const viewedSide = bottomView ? "B" : "F";
+      if (!partTarget.dataset.side || partTarget.dataset.side === viewedSide) {
+        if (choosePartAtPoint(partTarget, screenPoint)) return;
+      } else {
+        resolveBoardClickStack(event, null, screenPoint);
+        return;
+      }
     }
     const zoneTarget = event.target.closest(".zone-highlight");
     if (zoneTarget) {
-      resolveZoneClickStack(event, zoneTarget, screenPoint);
+      resolveBoardClickStack(event, zoneTarget, screenPoint);
       return;
     }
     const group = event.target.closest("[data-net-id]");
@@ -1020,9 +1052,9 @@
     choosePart(partTarget.dataset.partId);
   });
 
-  $("#fit-board").addEventListener("click", () => { viewBox = [...originalViewBox]; syncViewBox(); });
+  $("#fit-board").addEventListener("click", () => { viewBox = fittedViewBox(); syncViewBox(); });
   $("#reset-view").addEventListener("click", () => {
-    viewBox = [...originalViewBox];
+    viewBox = fittedViewBox();
     syncViewBox();
     setPlacementMode(false);
     bottomView = false;
@@ -1044,11 +1076,12 @@
   });
   canvas.addEventListener("wheel", (event) => {
     event.preventDefault();
-    const rect = canvas.getBoundingClientRect();
-    const screenX = (event.clientX - rect.left) / rect.width;
-    // Bottom view mirrors the board stack, so map the cursor back to board-space X.
-    const px = bottomView ? 1 - screenX : screenX;
-    const py = (event.clientY - rect.top) / rect.height;
+    const screenPoint = commentOverlay.createSVGPoint();
+    screenPoint.x = event.clientX;
+    screenPoint.y = event.clientY;
+    const viewPoint = screenPoint.matrixTransform(commentOverlay.getScreenCTM().inverse());
+    const px = (viewPoint.x - viewBox[0]) / viewBox[2];
+    const py = (viewPoint.y - viewBox[1]) / viewBox[3];
     const factor = event.deltaY < 0 ? 0.86 : 1.16;
     const nextWidth = viewBox[2] * factor;
     const nextHeight = viewBox[3] * factor;
@@ -1083,5 +1116,4 @@
   syncViewBox();
   renderComments();
   updateLayers();
-  applyViewerTheme(lightTheme);
 })();

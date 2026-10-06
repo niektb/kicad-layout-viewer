@@ -30,12 +30,14 @@ If `kicad-cli` is not on `PATH`, the plugin also checks the KiCad installation's
 - Independent show/hide controls for exported board layers, including copper, mask, paste, silkscreen, courtyard, and user layers. F.Fab and B.Fab are omitted from the viewer.
 - Artwork on each layer uses the matching color shown in the layer list.
 - Displays the board's KiCad title-block revision and issue date in the top bar when those fields are set.
-- Searchable net list with connected footprint references and pad numbers.
+- Searchable net list sorted by name, with unconnected pads last; long net names show in full on hover.
 - Multi-select nets from the list or by clicking highlighted pads, tracks, and zones; each selected net uses its own color across visible copper pads, tracks, vias, and filled zones.
 - Sensible default drawing order, with silkscreen and board outlines above copper; drag layer rows to change the order. The first row draws on top.
-- Bottom-side viewing that mirrors the board, swaps front/back layer visibility, and flips the layer order list.
+- Bottom-side viewing that mirrors the board, swaps front/back layer visibility, flips the layer order list, and keeps part pad highlights on the viewed side.
+- Part hitboxes only participate on the viewed board side, so hidden-side parts do not intercept zones.
+- **Clear highlights** clears selected nets and parts together.
 - A scrollable comments panel on the right, toggled by **Comments**, with coordinate-anchored notes that can be added, edited, deleted, hidden, imported, and exported as JSON.
-- Click **Comments > Add comment**, then click a board location to place a note. Press Esc or click Cancel to stop. Click a numbered marker or panel entry to edit or delete it.
+- Click **Comments > Add comment**, then click a board location to place a note. Press Esc or click Cancel to stop. Drag a numbered marker to move it; click a marker or panel entry to edit or delete it.
 - Import and export comments through the panel. The JSON file uses PCB millimeters and imports merge by comment ID, so repeated imports do not duplicate notes.
 - Transparent drill holes on non-copper layers, so holes do not render as black disks.
 - Pan, zoom, fit, and reset controls.

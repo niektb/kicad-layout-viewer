@@ -21,6 +21,7 @@ import wx
 ASSET_DIR = Path(__file__).with_name("assets")
 SVG_NS = "http://www.w3.org/2000/svg"
 DRILL_HOLE_COLOR = "#d9dce0"
+VIEWER_VERSION = "1.0.0"
 ET.register_namespace("", SVG_NS)
 TOP_LEVEL_ZONE_RE = re.compile(r"\(\s*zone(?:\s|\))")
 
@@ -435,7 +436,7 @@ def _color_for_layer(name):
     if name.endswith(".Cu"):
         # Keep layer swatches in a muted mineral palette so they stay distinct
         # from the brighter net-highlight colors used throughout the viewer.
-        colors = {"F.Cu": "#b47754", "B.Cu": "#6586a6", "In1.Cu": "#668276", "In2.Cu": "#897395"}
+        colors = {"F.Cu": "#bf7c4b", "B.Cu": "#6586a6", "In1.Cu": "#668276", "In2.Cu": "#897395"}
         return colors.get(name, "#a68a60")
     if "SilkS" in name:
         return "#d5d0b6"
@@ -474,6 +475,11 @@ def _part_viewer_data(board, copper, map_point):
     for index, footprint in enumerate(board.GetFootprints()):
         reference = _as_text(_call(footprint, ("GetReference",), ""))
         value = _as_text(_call(footprint, ("GetValue",), ""))
+        try:
+            footprint_layer = copper.get(int(footprint.GetLayer()), "")
+        except (AttributeError, TypeError, ValueError):
+            footprint_layer = ""
+        side = footprint_layer[0] if footprint_layer.startswith(("F.", "B.")) else ""
 
         try:
             # Exclude reference/value fields so their labels do not enlarge the
@@ -536,10 +542,11 @@ def _part_viewer_data(board, copper, map_point):
         parts.append({
             "reference": reference,
             "value": value,
+            "side": side,
             "box": {"x": x, "y": y, "right": hit_right, "bottom": hit_bottom},
             "pads": pads,
         })
-        hit_boxes.append((index, reference, value, x, y, hit_right, hit_bottom))
+        hit_boxes.append((index, reference, value, side, x, y, hit_right, hit_bottom))
     return parts, hit_boxes
 
 
@@ -773,11 +780,12 @@ def _make_overlay(board, layer_definitions, view_box, edge_bounds, zone_fills, s
                 group.append(shape)
     parts, hit_boxes = _part_viewer_data(board, copper, map_point)
     hit_layer = ET.SubElement(root, "{%s}g" % SVG_NS, {"class": "part-hit-layer"})
-    for index, reference, value, left, top, right, bottom in hit_boxes:
+    for index, reference, value, side, left, top, right, bottom in hit_boxes:
         label = reference + (" · " + value if value else "")
         hit_box = ET.SubElement(hit_layer, "{%s}rect" % SVG_NS, {
             "class": "part-hit",
             "data-part-id": str(index),
+            "data-side": side,
             "x": _xml_number(left), "y": _xml_number(top),
             "width": _xml_number(right - left), "height": _xml_number(bottom - top),
             "role": "button", "tabindex": "0", "aria-label": "Select part " + label,
@@ -803,10 +811,23 @@ def _net_data(board, counts):
             "track_count": summary["track_count"],
             "via_count": summary["via_count"],
         })
+    unconnected_pads = []
+    for footprint in board.GetFootprints():
+        reference = _as_text(_call(footprint, ("GetReference",), ""))
+        for pad in footprint.Pads():
+            if int(_call(pad, ("GetNetCode",), 0) or 0) == 0:
+                unconnected_pads.append({
+                    "ref": reference,
+                    "pin": _as_text(_call(pad, ("GetNumber",), "")),
+                })
+    if unconnected_pads:
+        unconnected_pads.sort(key=lambda pad: (pad["ref"], pad["pin"]))
+        nets.append({"code": 0, "name": "Unconnected", "color": "#8793a1",
+                     "pads": unconnected_pads, "track_count": 0, "via_count": 0})
     return nets
 
 
-def _document(board_name, revision, issue_date, layer_data, nets, parts, svg_roots, overlay, edge_bounds, drill_origin_svg):
+def _document(board_name, revision, issue_date, layer_data, nets, parts, svg_roots, overlay, edge_bounds, drill_origin_svg, svg_offset):
     template = (ASSET_DIR / "viewer.html").read_text(encoding="utf-8")
     css = (ASSET_DIR / "viewer.css").read_text(encoding="utf-8")
     js = (ASSET_DIR / "viewer.js").read_text(encoding="utf-8")
@@ -819,9 +840,12 @@ def _document(board_name, revision, issue_date, layer_data, nets, parts, svg_roo
     board_meta = " · ".join(metadata)
     left, top, right, bottom = edge_bounds
     board_bounds_mm = {"left": left, "top": top, "right": right, "bottom": bottom}
-    data = json.dumps({"board": board_name, "layers": layer_data, "nets": nets, "parts": parts,
+    data = json.dumps({"board": board_name, "viewer_version": VIEWER_VERSION,
+                       "layers": layer_data, "nets": nets, "parts": parts,
                        "board_bounds_mm": board_bounds_mm,
-                       "drill_origin_svg": drill_origin_svg}, ensure_ascii=False, separators=(",", ":"))
+                       "drill_origin_svg": drill_origin_svg,
+                       "svg_coordinate_offset": {"x": svg_offset[0], "y": svg_offset[1]}},
+                      ensure_ascii=False, separators=(",", ":"))
     data = data.replace("&", "\\u0026").replace("<", "\\u003c").replace(">", "\\u003e")
     layer_markup = "\n".join(ET.tostring(root, encoding="unicode") for root in svg_roots)
     overlay_markup = ET.tostring(overlay, encoding="unicode")
@@ -831,6 +855,7 @@ def _document(board_name, revision, issue_date, layer_data, nets, parts, svg_roo
         "{{BOARD_NAME}}": board_label,
         "{{BOARD_META}}": board_meta,
         "{{SUMMARY}}": summary,
+        "{{VIEWER_VERSION}}": VIEWER_VERSION,
         "{{SVG_LAYERS}}": layer_markup,
         "{{NET_OVERLAY}}": overlay_markup,
         "{{DATA}}": data,
@@ -912,7 +937,7 @@ def export_board(board, board_path, output_path):
         nets = _net_data(board, counts)
         layer_data = [{"name": name, "color": _color_for_layer(name), "visible": _initial_visibility(name)} for name in layer_names]
         document = _document(Path(board_path).stem, revision, issue_date, layer_data, nets, parts,
-                             svg_roots, overlay, edge_bounds, drill_origin_svg)
+                             svg_roots, overlay, edge_bounds, drill_origin_svg, svg_offset)
         Path(output_path).write_text(document, encoding="utf-8")
 
 
