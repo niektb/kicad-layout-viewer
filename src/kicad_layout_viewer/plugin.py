@@ -21,7 +21,7 @@ import wx
 ASSET_DIR = Path(__file__).with_name("assets")
 SVG_NS = "http://www.w3.org/2000/svg"
 DRILL_HOLE_COLOR = "#d9dce0"
-VIEWER_VERSION = "1.0.0"
+VIEWER_VERSION = "1.0.1"
 ET.register_namespace("", SVG_NS)
 TOP_LEVEL_ZONE_RE = re.compile(r"\(\s*zone(?:\s|\))")
 
