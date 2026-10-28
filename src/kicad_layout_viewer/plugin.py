@@ -273,7 +273,7 @@ def _svg_file_layers(svg_files, board_stem, layer_names):
     return results
 
 
-def _svg_root(path, layer_name, nonplated_pad_centers=()):
+def _svg_root(path, layer_name, nonplated_pad_centers=(), silkscreen_circles=(), pad_centers=()):
     root = ET.parse(str(path)).getroot()
     root.set("class", "layer-svg")
     root.set("data-layer", layer_name)
@@ -281,6 +281,7 @@ def _svg_root(path, layer_name, nonplated_pad_centers=()):
     root.set("height", "100%")
     root.set("preserveAspectRatio", "xMidYMid meet")
     layer_color = _color_for_layer(layer_name)
+    is_silkscreen = layer_name.endswith(".SilkS")
     # KiCad emits unstyled circles for round pads and vias. Give these the
     # layer color as a fill without an outline, which would enlarge the copper
     # diameter; drill openings are masked separately after SVG assembly.
@@ -288,8 +289,56 @@ def _svg_root(path, layer_name, nonplated_pad_centers=()):
     for circle in root.iter("{%s}circle" % SVG_NS):
         if "style" not in circle.attrib and "fill" not in circle.attrib and "stroke" not in circle.attrib:
             pad_circles.append(circle)
-            circle.set("fill", layer_color)
-            circle.set("stroke", "none")
+            if is_silkscreen:
+                try:
+                    center = (float(circle.get("cx")), float(circle.get("cy")))
+                    radius = float(circle.get("r"))
+                except (TypeError, ValueError):
+                    center, radius = None, None
+                if center is not None and any(
+                    abs(center[0] - x) < 0.01 and abs(center[1] - y) < 0.01
+                    for x, y in pad_centers
+                ):
+                    circle.set("fill", "none")
+                    circle.set("stroke", "none")
+                else:
+                    # Circle objects carry their transformed center, radius,
+                    # fill mode, and stroke width from the board model.
+                    candidates = [item for item in silkscreen_circles
+                                  if item[0] == layer_name and center is not None
+                                  and abs(center[0] - item[1]) < 0.01
+                                  and abs(center[1] - item[2]) < 0.01]
+                    matching = min(candidates, key=lambda item: min(
+                        abs(radius - item[3]),
+                        abs(radius - item[3] - item[5] / 2),
+                        abs(radius - max(0, item[3] - item[5] / 2)),
+                    ), default=None)
+                    if matching is None:
+                        # Unknown unstyled circles on silk are outlines by
+                        # default; SVG's implicit black fill is not design intent.
+                        circle.set("fill", "none")
+                        circle.set("stroke", layer_color)
+                        circle.set("stroke-width", "0.12")
+                    else:
+                        _, _, _, _, is_filled, width = matching
+                        circle.set("fill", layer_color if is_filled else "none")
+                        if is_filled:
+                            # The fill already defines the circle's visible
+                            # boundary. Adding a centered SVG stroke expands
+                            # the disc beyond KiCad's circle radius.
+                            circle.set("stroke", "none")
+                        else:
+                            # KiCad's SVG plotter expands some outline circle
+                            # radii by half the stroke width. Restore the
+                            # board-model radius before applying the SVG
+                            # stroke, or the circle grows and leaves an
+                            # artificial center gap.
+                            circle.set("r", _xml_number(matching[3]))
+                            circle.set("stroke", layer_color)
+                            circle.set("stroke-width", str(width))
+            else:
+                circle.set("fill", layer_color)
+                circle.set("stroke", "none")
     for element in root.iter():
         for attribute in ("fill", "stroke"):
             value = element.get(attribute)
@@ -382,6 +431,47 @@ def _nonplated_pad_centers(board, view_box, edge_bounds, svg_offset=(0, 0)):
         for pad in footprint.Pads():
             if _call(pad, ("GetAttribute",), None) != npth_attribute:
                 continue
+            x, y = _point(pad.GetPosition())
+            centers.append((vx + x - min_x + offset_x, vy + y - min_y + offset_y))
+    return centers
+
+
+def _silkscreen_circle_data(board, view_box, edge_bounds, svg_offset=(0, 0)):
+    vx, vy, _, _ = view_box
+    min_x, min_y, _, _ = edge_bounds
+    offset_x, offset_y = svg_offset
+    circles = []
+    circle_shape = getattr(pcbnew, "SHAPE_T_CIRCLE", None)
+    filled_mode = getattr(pcbnew, "FILL_T_FILLED_SHAPE", None)
+    graphics = []
+    for footprint in board.GetFootprints():
+        graphics.extend(footprint.GraphicalItems())
+    graphics.extend(board.GetDrawings())
+    for item in graphics:
+        layer_name = _call(item, ("GetLayerName",), "")
+        layer_name = {"F.Silkscreen": "F.SilkS", "B.Silkscreen": "B.SilkS"}.get(layer_name, layer_name)
+        if (_call(item, ("GetShape",), None) != circle_shape
+                or layer_name not in ("F.SilkS", "B.SilkS")):
+            continue
+        x, y = _point(item.GetCenter())
+        radius = _mm(item.GetRadius())
+        # Effective width resolves KiCad's default/inherited line thickness;
+        # older API versions may only expose GetWidth().
+        width = _mm(_call(item, ("GetEffectiveWidth", "GetWidth"), 0))
+        center_x = vx + x - min_x + offset_x
+        center_y = vy + y - min_y + offset_y
+        circles.append((layer_name, center_x, center_y, radius,
+                        _call(item, ("GetFillMode",), None) == filled_mode, width))
+    return circles
+
+
+def _pad_centers(board, view_box, edge_bounds, svg_offset=(0, 0)):
+    vx, vy, _, _ = view_box
+    min_x, min_y, _, _ = edge_bounds
+    offset_x, offset_y = svg_offset
+    centers = []
+    for footprint in board.GetFootprints():
+        for pad in footprint.Pads():
             x, y = _point(pad.GetPosition())
             centers.append((vx + x - min_x + offset_x, vy + y - min_y + offset_y))
     return centers
@@ -916,11 +1006,14 @@ def export_board(board, board_path, output_path):
             "y": view_box[1] + drill_origin_mm[1] - edge_bounds[1] + svg_offset[1],
         }
         nonplated_centers = _nonplated_pad_centers(board, view_box, edge_bounds, svg_offset)
+        silkscreen_circles = _silkscreen_circle_data(board, view_box, edge_bounds, svg_offset)
+        pad_centers = _pad_centers(board, view_box, edge_bounds, svg_offset)
 
         # Build SVG roots only for layers that really have a file.  Missing
         # mechanical‑drawing layers are simply omitted – the viewer will still
         # display the toggle for them, but they will be invisible when empty.
-        svg_roots = [_svg_root(matched[name], name, nonplated_centers)
+        svg_roots = [_svg_root(matched[name], name, nonplated_centers,
+                               silkscreen_circles, pad_centers)
                     for name in layer_names if name in matched]
         
         for svg_root, name in zip(svg_roots, layer_names):

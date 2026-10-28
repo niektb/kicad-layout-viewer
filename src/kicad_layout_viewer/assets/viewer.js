@@ -561,6 +561,8 @@
   }
 
   function updateLayers() {
+    const copperVisible = layers.some((layer) => layer.name.endsWith(".Cu") && layerVisible(layer.name));
+    stack.classList.toggle("has-visible-copper", copperVisible);
     layerSvgs.forEach((svg) => {
       const visible = layerVisible(svg.dataset.layer);
       svg.classList.toggle("is-visible", visible);
