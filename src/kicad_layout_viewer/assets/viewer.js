@@ -22,7 +22,6 @@
   const setSidebarWidth = (width) => {
     sidebarWidth = clampSidebarWidth(width);
     app.style.setProperty("--sidebar-width", `${sidebarWidth}px`);
-    sidebarResizer.setAttribute("aria-valuenow", String(Math.round(sidebarWidth)));
     try { localStorage.setItem(sidebarWidthKey, String(Math.round(sidebarWidth))); } catch (_) { /* Keep resizing available without storage. */ }
   };
   setSidebarWidth(sidebarWidth);
@@ -39,16 +38,6 @@
     sidebarResizer.addEventListener("pointermove", move);
     sidebarResizer.addEventListener("pointerup", finish);
     sidebarResizer.addEventListener("pointercancel", finish);
-  });
-  sidebarResizer.addEventListener("keydown", (event) => {
-    const direction = document.documentElement.dir === "rtl" ? -1 : 1;
-    if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
-      event.preventDefault();
-      setSidebarWidth(sidebarWidth + (event.key === "ArrowRight" ? direction : -direction) * (event.shiftKey ? 32 : 12));
-    } else if (event.key === "Home" || event.key === "End") {
-      event.preventDefault();
-      setSidebarWidth(event.key === "Home" ? 200 : 520);
-    }
   });
   window.addEventListener("resize", () => setSidebarWidth(sidebarWidth));
   const commentTooltip = document.createElement("div");
