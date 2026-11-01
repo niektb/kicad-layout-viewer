@@ -10,6 +10,47 @@
   const partList = $("#part-list");
   const stack = $("#board-stack");
   const canvas = $("#canvas");
+  const app = document.querySelector(".app");
+  const sidebarResizer = $("#sidebar-resizer");
+  const sidebarWidthKey = "kicad-layout-viewer-sidebar-width";
+  const clampSidebarWidth = (width) => Math.max(200, Math.min(520, window.innerWidth - 360, width));
+  let sidebarWidth = 290;
+  try {
+    const savedWidth = Number(localStorage.getItem(sidebarWidthKey));
+    if (Number.isFinite(savedWidth) && savedWidth > 0) sidebarWidth = clampSidebarWidth(savedWidth);
+  } catch (_) { /* Storage can be disabled for local HTML files. */ }
+  const setSidebarWidth = (width) => {
+    sidebarWidth = clampSidebarWidth(width);
+    app.style.setProperty("--sidebar-width", `${sidebarWidth}px`);
+    sidebarResizer.setAttribute("aria-valuenow", String(Math.round(sidebarWidth)));
+    try { localStorage.setItem(sidebarWidthKey, String(Math.round(sidebarWidth))); } catch (_) { /* Keep resizing available without storage. */ }
+  };
+  setSidebarWidth(sidebarWidth);
+  sidebarResizer.addEventListener("pointerdown", (event) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    sidebarResizer.setPointerCapture(event.pointerId);
+    const move = (moveEvent) => setSidebarWidth(moveEvent.clientX - app.getBoundingClientRect().left);
+    const finish = () => {
+      sidebarResizer.removeEventListener("pointermove", move);
+      sidebarResizer.removeEventListener("pointerup", finish);
+      sidebarResizer.removeEventListener("pointercancel", finish);
+    };
+    sidebarResizer.addEventListener("pointermove", move);
+    sidebarResizer.addEventListener("pointerup", finish);
+    sidebarResizer.addEventListener("pointercancel", finish);
+  });
+  sidebarResizer.addEventListener("keydown", (event) => {
+    const direction = document.documentElement.dir === "rtl" ? -1 : 1;
+    if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+      event.preventDefault();
+      setSidebarWidth(sidebarWidth + (event.key === "ArrowRight" ? direction : -direction) * (event.shiftKey ? 32 : 12));
+    } else if (event.key === "Home" || event.key === "End") {
+      event.preventDefault();
+      setSidebarWidth(event.key === "Home" ? 200 : 520);
+    }
+  });
+  window.addEventListener("resize", () => setSidebarWidth(sidebarWidth));
   const commentTooltip = document.createElement("div");
   commentTooltip.className = "comment-tooltip";
   commentTooltip.hidden = true;
