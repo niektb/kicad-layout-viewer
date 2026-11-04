@@ -203,6 +203,10 @@
   commentOverlay.setAttribute("aria-label", "Board comments");
   commentOverlay.setAttribute("preserveAspectRatio", "xMidYMid meet");
   stack.append(commentOverlay);
+  const measurementGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
+  measurementGroup.setAttribute("class", "measurements");
+  measurementGroup.style.visibility = "visible";
+  commentOverlay.append(measurementGroup);
   const selectedNets = new Set();
   const selectedPartIds = new Set();
   function updateZoneTransparency() {
@@ -268,6 +272,10 @@
   const svgCoordinateOffset = data.svg_coordinate_offset || { x: 0, y: 0 };
   let commentsVisible = true;
   let placingComment = false;
+  let measuring = false;
+  let measurementStart = null;
+  let measurementPreview = null;
+  const measurements = [];
   let draftPoint = null;
   let editingCommentId = null;
   let bottomView = false;
@@ -285,6 +293,65 @@
     const value = viewBox.join(" ");
     [...layerSvgs, overlay, commentOverlay].forEach((svg) => svg.setAttribute("viewBox", value));
     syncCommentMarkerSize();
+    renderMeasurements();
+  }
+
+  function renderMeasurements() {
+    const matrix = commentOverlay.getScreenCTM();
+    const scale = matrix ? Math.hypot(matrix.a, matrix.b) : 1;
+    const radius = 5 / Math.max(scale, 0.001);
+    const fontSize = 12 / Math.max(scale, 0.001);
+    measurementGroup.replaceChildren();
+    const items = measurementPreview ? [...measurements, measurementPreview] : measurements;
+    items.forEach((item, index) => {
+      const a = boardToSvg(item.a);
+      const b = boardToSvg(item.b);
+      const group = document.createElementNS("http://www.w3.org/2000/svg", "g");
+      group.setAttribute("class", "measurement-line");
+      const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
+      line.setAttribute("x1", a.x); line.setAttribute("y1", a.y);
+      line.setAttribute("x2", b.x); line.setAttribute("y2", b.y);
+      line.setAttribute("vector-effect", "non-scaling-stroke");
+      group.append(line);
+      [a, b].forEach((point) => {
+        const dot = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+        dot.setAttribute("cx", point.x); dot.setAttribute("cy", point.y);
+        dot.setAttribute("r", radius);
+        dot.setAttribute("vector-effect", "non-scaling-stroke");
+        group.append(dot);
+      });
+      const label = document.createElementNS("http://www.w3.org/2000/svg", "text");
+      label.setAttribute("x", (a.x + b.x) / 2);
+      label.setAttribute("y", (a.y + b.y) / 2 - radius * 1.7);
+      label.setAttribute("font-size", fontSize);
+      label.textContent = `${Math.hypot(item.b.x - item.a.x, item.b.y - item.a.y).toFixed(2)} mm`;
+      group.append(label);
+      measurementGroup.append(group);
+      const bounds = label.getBBox();
+      const padding = 5 / Math.max(scale, 0.001);
+      const background = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+      background.setAttribute("class", "measurement-label-background");
+      background.setAttribute("x", bounds.x - padding);
+      background.setAttribute("y", bounds.y - padding * 0.55);
+      background.setAttribute("width", bounds.width + padding * 2);
+      background.setAttribute("height", bounds.height + padding * 1.1);
+      background.setAttribute("rx", padding * 0.7);
+      background.setAttribute("vector-effect", "non-scaling-stroke");
+      group.insertBefore(background, label);
+    });
+    $("#clear-measurements").hidden = measurements.length === 0;
+  }
+
+  function setMeasurementMode(active) {
+    measuring = active;
+    measurementStart = null;
+    measurementPreview = null;
+    $("#measure-distance").setAttribute("aria-pressed", String(active));
+    canvas.classList.toggle("is-measuring", active);
+    $("#interaction-hint").textContent = active
+      ? "Click two board points to measure Â· Click Measure or press Esc to exit Â· Right-drag to pan"
+      : "Export comments to save Â· Scroll to zoom Â· Right-drag to pan Â· Click nets to highlight Â· Click parts to select pads";
+    renderMeasurements();
   }
 
   function fittedViewBox() {
@@ -400,6 +467,8 @@
     });
     syncCommentMarkerSize();
     syncCommentMarkerText();
+    commentOverlay.append(measurementGroup);
+    renderMeasurements();
   }
 
   const COMMENT_MARKER_RADIUS_PX = 15;
@@ -680,6 +749,20 @@
     netList.querySelectorAll(".net-row").forEach((row) => {
       row.setAttribute("aria-pressed", String(selectedNets.has(row.dataset.netId)));
     });
+    const netRows = [...netList.querySelectorAll(".net-row")];
+    const netRowOrder = new Map(netRows.map((row, index) => [row, index]));
+    netRows.sort((a, b) => {
+      const aNet = netById.get(a.dataset.netId)?.net;
+      const bNet = netById.get(b.dataset.netId)?.net;
+      const aUnconnected = aNet?.code === 0 || aNet?.name.toLocaleLowerCase().startsWith("unconnected");
+      const bUnconnected = bNet?.code === 0 || bNet?.name.toLocaleLowerCase().startsWith("unconnected");
+      if (aUnconnected !== bUnconnected) return aUnconnected ? 1 : -1;
+      const aSelected = selectedNets.has(a.dataset.netId);
+      const bSelected = selectedNets.has(b.dataset.netId);
+      if (aSelected !== bSelected) return aSelected ? -1 : 1;
+      return netRowOrder.get(a) - netRowOrder.get(b);
+    });
+    netRows.forEach((row) => netList.append(row));
     partList.querySelectorAll(".part-row").forEach((row) => {
       row.setAttribute("aria-pressed", String(selectedPartIds.has(row.dataset.partId)));
     });
@@ -794,6 +877,9 @@
       const aUnconnected = a.code === 0 || a.name.toLocaleLowerCase().startsWith("unconnected");
       const bUnconnected = b.code === 0 || b.name.toLocaleLowerCase().startsWith("unconnected");
       if (aUnconnected !== bUnconnected) return aUnconnected ? 1 : -1;
+      const aSelected = selectedNets.has(String(a.code));
+      const bSelected = selectedNets.has(String(b.code));
+      if (aSelected !== bSelected) return aSelected ? -1 : 1;
       return netNameOrder.compare(a.name, b.name) || Number(a.code) - Number(b.code);
     });
     $("#net-count").textContent = `${matching.length} / ${nets.length}`;
@@ -867,6 +953,15 @@
   });
   $("#add-comment").addEventListener("click", () => {
     setPlacementMode(!placingComment);
+  });
+  $("#measure-distance").addEventListener("click", () => {
+    if (!measuring) setPlacementMode(false);
+    setMeasurementMode(!measuring);
+  });
+  $("#clear-measurements").addEventListener("click", () => {
+    measurements.splice(0, measurements.length);
+    measurementPreview = null;
+    renderMeasurements();
   });
   $("#toggle-comment-panel").addEventListener("click", (event) => {
     const panel = $("#comments-panel");
@@ -1012,8 +1107,31 @@
     setPlacementMode(false);
     openCommentDialog(point);
   }, true);
+  canvas.addEventListener("click", (event) => {
+    if (!measuring) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    const point = screenToBoard(event.clientX, event.clientY);
+    if (point.x < boardBounds.left || point.x > boardBounds.right || point.y < boardBounds.top || point.y > boardBounds.bottom) return;
+    if (!measurementStart) {
+      measurementStart = point;
+      measurementPreview = { a: point, b: point };
+    } else {
+      measurements.push({ a: measurementStart, b: point });
+      measurementStart = null;
+      measurementPreview = null;
+    }
+    renderMeasurements();
+  }, true);
+  canvas.addEventListener("pointermove", (event) => {
+    if (!measuring || !measurementStart) return;
+    measurementPreview = { a: measurementStart, b: screenToBoard(event.clientX, event.clientY) };
+    renderMeasurements();
+  });
   document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && placingComment) setPlacementMode(false);
+    if (event.key !== "Escape") return;
+    if (placingComment) setPlacementMode(false);
+    if (measuring) setMeasurementMode(false);
   });
   $("#flip-board").addEventListener("click", (event) => {
     const inputs = inputByLayer;
@@ -1124,8 +1242,7 @@
     syncViewBox();
   }, { passive: false });
   canvas.addEventListener("pointerdown", (event) => {
-    if (placingComment) return;
-    if (event.button !== 2) return;
+    if (placingComment || event.button !== 2) return;
     pointer = { id: event.pointerId, x: event.clientX, y: event.clientY };
     canvas.setPointerCapture(event.pointerId);
   });
@@ -1142,6 +1259,12 @@
     pointer.y = event.clientY;
     syncViewBox();
   });
+  canvas.addEventListener("pointermove", (event) => {
+    const coordinates = $("#mouse-coordinates");
+    coordinates.textContent = formatCoordinate(screenToBoard(event.clientX, event.clientY));
+    coordinates.hidden = false;
+  });
+  canvas.addEventListener("pointerleave", () => { $("#mouse-coordinates").hidden = true; });
   canvas.addEventListener("pointerup", () => { pointer = null; });
   canvas.addEventListener("pointercancel", () => { pointer = null; });
   canvas.addEventListener("contextmenu", (event) => event.preventDefault());

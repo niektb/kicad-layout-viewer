@@ -4,6 +4,8 @@
 
 ### Added
 
+- Added a distance measurement tool with a zoom-stable label and live cursor coordinates in the status bar.
+- Highlighted nets now move to the top of the net list while unconnected nets remain at the bottom.
 - Added a **Clear highlights** control to clear selected nets and parts together.
 - Added part-side metadata to exports so part hit testing and pad highlights can follow the viewed side of the board.
 - Added a version label to the viewer credit and replaced the text mark with a custom circuit-style logo.

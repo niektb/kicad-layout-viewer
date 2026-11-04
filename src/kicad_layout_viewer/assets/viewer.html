@@ -14,6 +14,8 @@
       <button id="fit-board" type="button" title="Fit board to view">Fit</button>
       <button id="reset-view" type="button" title="Restore initial board view, layers, order, net selection, and zone transparency">Reset</button>
       <button id="clear-highlights" type="button" title="Clear selected nets and parts">Clear highlights</button>
+      <button id="measure-distance" type="button" aria-pressed="false" title="Measure distance between board points">Measure</button>
+      <button id="clear-measurements" type="button" title="Clear measurements" hidden>Clear measurements</button>
       <button id="flip-board" type="button" aria-pressed="false" title="Flip the board to view from the bottom">View bottom</button>
       <button id="toggle-comment-panel" type="button" aria-controls="comments-panel" aria-expanded="false" aria-pressed="false">Comments</button>
     </div>
@@ -51,7 +53,7 @@
         <div class="board-stack" id="board-stack">{{SVG_LAYERS}}{{NET_OVERLAY}}</div>
         <div id="empty-state" class="empty-state" hidden>Select at least one layer to view the board.</div>
       </div>
-      <div class="statusbar"><span id="selection-status">No net selected</span><span id="interaction-hint">Export comments to save · Scroll to zoom · Right-drag to pan · Click nets to highlight · Click parts to select pads</span></div>
+      <div class="statusbar"><span id="selection-status">No net selected</span><span id="mouse-coordinates" class="mouse-coordinates" title="Cursor coordinates relative to the drill origin" hidden></span><span id="interaction-hint">Export comments to save · Scroll to zoom · Right-drag to pan · Click nets to highlight · Click parts to select pads</span></div>
     </section>
     <aside id="comments-panel" class="comments-panel" aria-label="Board comments" hidden>
       <div class="section-heading"><h2>Comments</h2><span id="comment-count" class="count">0</span></div>

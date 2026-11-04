@@ -36,6 +36,7 @@ If `kicad-cli` is not on `PATH`, the plugin also checks the KiCad installation's
 - Bottom-side viewing that mirrors the board, swaps front/back layer visibility, flips the layer order list, and keeps part pad highlights on the viewed side.
 - Part hitboxes only participate on the viewed board side, so hidden-side parts do not intercept zones.
 - **Clear highlights** clears selected nets and parts together.
+- Measure board distances by clicking two points; cursor coordinates are shown relative to the drill origin, with Y positive upwards.
 - A scrollable comments panel on the right, toggled by **Comments**, with coordinate-anchored notes that can be added, edited, deleted, hidden, imported, and exported as JSON.
 - Click **Comments > Add comment**, then click a board location to place a note. Press Esc or click Cancel to stop. Drag a numbered marker to move it; click a marker or panel entry to edit or delete it.
 - Import and export comments through the panel. The JSON file uses PCB millimeters and imports merge by comment ID, so repeated imports do not duplicate notes.
