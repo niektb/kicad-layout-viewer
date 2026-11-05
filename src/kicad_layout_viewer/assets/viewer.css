@@ -122,7 +122,8 @@
 #toggle-comments[aria-pressed="true"]{border-color:#5f9fc0;background:#263a49;color:var(--accent);box-shadow:inset 0 0 0 1px #5f9fc055}
 .statusbar{height:auto;min-height:42px;flex:0 0 auto;flex-wrap:wrap;align-items:center;gap:5px 18px;padding:8px 13px;font-size:13px}
 .statusbar #interaction-hint{text-align:right}
-.statusbar .mouse-coordinates{color:var(--accent);font-variant-numeric:tabular-nums;white-space:nowrap}
+.statusbar .mouse-coordinates{display:inline-block;flex:0 0 190px;height:1.4em;visibility:hidden;color:var(--accent);font-variant-numeric:tabular-nums;white-space:nowrap}
+.statusbar .mouse-coordinates.has-position{visibility:visible}
 @media(max-width:760px){.statusbar{align-items:flex-start;flex-direction:column;gap:2px;padding:7px 10px;font-size:12px}.statusbar #interaction-hint{text-align:left}}
 /* Let transparent inactive net groups pass hit testing to their explicit geometry. */
 .net-overlay [data-net-id]{pointer-events:none}

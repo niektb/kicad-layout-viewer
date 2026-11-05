@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 1.0.4
 
 ### Added
 
@@ -17,6 +17,7 @@
 
 ### Changed
 
+- Reserved space for pointer coordinates in the status bar to prevent layout shifts when moving over the board.
 - Updated bottom-side viewing so selected part pads remain visible and use a distinct blue shade. Hidden-side parts no longer take priority over visible board objects; opposite-side parts remain selectable when no visible object is hit.
 - Made the initial view use the same fitted framing as **Fit** and **Reset**, with a small margin. Zooming now derives its anchor through the SVG screen transform for more accurate cursor-centered zoom.
 - Corrected comment coordinate conversions to account for the exported SVG coordinate offset; exported comment coordinates remain relative to the drill origin with Y positive upwards.

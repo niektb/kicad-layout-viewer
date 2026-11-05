@@ -1344,9 +1344,14 @@
   canvas.addEventListener("pointermove", (event) => {
     const coordinates = $("#mouse-coordinates");
     coordinates.textContent = formatCoordinate(screenToBoard(event.clientX, event.clientY));
-    coordinates.hidden = false;
+    coordinates.classList.add("has-position");
+    coordinates.setAttribute("aria-hidden", "false");
   });
-  canvas.addEventListener("pointerleave", () => { $("#mouse-coordinates").hidden = true; });
+  canvas.addEventListener("pointerleave", () => {
+    const coordinates = $("#mouse-coordinates");
+    coordinates.classList.remove("has-position");
+    coordinates.setAttribute("aria-hidden", "true");
+  });
   canvas.addEventListener("pointerup", () => { pointer = null; });
   canvas.addEventListener("pointercancel", () => { pointer = null; });
   canvas.addEventListener("contextmenu", (event) => event.preventDefault());
