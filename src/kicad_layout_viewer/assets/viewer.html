@@ -22,21 +22,35 @@
   </header>
   <main class="app">
     <aside class="sidebar">
-      <section class="section layers-section">
+      <nav class="sidebar-tabs" aria-label="Sidebar panels">
+        <button type="button" data-sidebar-tab="layers" aria-controls="layers-panel" aria-pressed="true">Layers</button>
+        <button type="button" data-sidebar-tab="nets" aria-controls="nets-panel" aria-pressed="false">Nets</button>
+        <button type="button" data-sidebar-tab="parts" aria-controls="parts-panel" aria-pressed="false">Parts</button>
+      </nav>
+      <section id="layers-panel" class="section layers-section" aria-label="Layers">
         <div class="section-heading"><h2>Layers <small class="order-hint">drag to reorder · top first</small></h2><div class="small-actions"><button id="show-all-layers" type="button">All</button><button id="hide-all-layers" type="button">None</button></div></div>
         <label class="zone-transparency-control" for="zone-transparency">
           <span>Copper zone transparency</span>
           <span id="zone-transparency-value" class="zone-transparency-value">66%</span>
           <input id="zone-transparency" type="range" min="0" max="100" step="1" value="66" aria-label="Copper zone transparency">
         </label>
-        <div id="layer-list" class="layer-list"></div>
+        <div class="layer-list-layout">
+          <div id="copper-quick-controls" class="copper-quick-controls" aria-label="Copper layer visibility">
+            <div class="copper-quick-heading">Copper</div>
+            <div id="copper-layer-list" class="copper-layer-list"></div>
+          </div>
+          <div class="full-layer-list">
+            <div class="full-layer-heading">All layers</div>
+            <div id="layer-list" class="layer-list"></div>
+          </div>
+        </div>
       </section>
-      <section class="section nets-section">
+      <section id="nets-panel" class="section nets-section" aria-label="Nets">
         <div class="section-heading"><h2>Nets</h2><span id="net-count" class="count"></span></div>
         <input id="net-search" class="search" type="search" placeholder="Filter nets…" aria-label="Filter nets">
         <div id="net-list" class="net-list"></div>
       </section>
-      <section class="section parts-section">
+      <section id="parts-panel" class="section parts-section" aria-label="Parts">
         <div class="section-heading"><h2>Parts</h2><span id="part-count" class="count"></span></div>
         <input id="part-search" class="search" type="search" placeholder="Filter by reference…" aria-label="Filter parts by reference designator">
         <div id="part-list" class="part-list"></div>

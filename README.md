@@ -38,6 +38,8 @@ If `kicad-cli` is not on `PATH`, the plugin also checks the KiCad installation's
 - **Clear highlights** clears selected nets and parts together.
 - Measure board distances by clicking two points; cursor coordinates are shown relative to the drill origin, with Y positive upwards.
 - A scrollable comments panel on the right, toggled by **Comments**, with coordinate-anchored notes that can be added, edited, deleted, hidden, imported, and exported as JSON.
+- On narrow displays, the left sidebar switches between **Layers**, **Nets**, and **Parts** tabs to preserve canvas space.
+- A separated copper quick-toggle column sits beside the full layer list; both lists can be dragged to change layer draw order.
 - Click **Comments > Add comment**, then click a board location to place a note. Press Esc or click Cancel to stop. Drag a numbered marker to move it; click a marker or panel entry to edit or delete it.
 - Import and export comments through the panel. The JSON file uses PCB millimeters and imports merge by comment ID, so repeated imports do not duplicate notes.
 - Transparent drill holes on non-copper layers, so holes do not render as black disks.

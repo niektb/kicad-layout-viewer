@@ -6,15 +6,29 @@
   const parts = data.parts || [];
   const $ = (selector) => document.querySelector(selector);
   const layerList = $("#layer-list");
+  const copperLayerList = $("#copper-layer-list");
   const netList = $("#net-list");
   const partList = $("#part-list");
   const stack = $("#board-stack");
   const canvas = $("#canvas");
   const app = document.querySelector(".app");
   const sidebarResizer = $("#sidebar-resizer");
+  const sidebarTabButtons = [...document.querySelectorAll("[data-sidebar-tab]")];
+  function selectSidebarTab(name) {
+    sidebarTabButtons.forEach((button) => {
+      const selected = button.dataset.sidebarTab === name;
+      button.setAttribute("aria-pressed", String(selected));
+      const panel = document.getElementById(button.getAttribute("aria-controls"));
+      panel?.classList.toggle("sidebar-panel-inactive", !selected);
+    });
+  }
+  sidebarTabButtons.forEach((button) => {
+    button.addEventListener("click", () => selectSidebarTab(button.dataset.sidebarTab));
+  });
+  selectSidebarTab("layers");
   const sidebarWidthKey = "kicad-layout-viewer-sidebar-width";
   const clampSidebarWidth = (width) => Math.max(200, Math.min(520, window.innerWidth - 360, width));
-  let sidebarWidth = 290;
+  let sidebarWidth = 330;
   try {
     const savedWidth = Number(localStorage.getItem(sidebarWidthKey));
     if (Number.isFinite(savedWidth) && savedWidth > 0) sidebarWidth = clampSidebarWidth(savedWidth);
@@ -47,6 +61,8 @@
   canvas.append(commentTooltip);
   const rowByLayer = new Map();
   const inputByLayer = new Map();
+  const copperInputByLayer = new Map();
+  const copperRowByLayer = new Map();
   const layerSvgs = [...document.querySelectorAll(".layer-svg")];
   const svgByLayer = new Map(layerSvgs.map((svg) => [svg.dataset.layer, svg]));
   const layerByName = new Map(layers.map((layer) => [layer.name, layer]));
@@ -221,6 +237,13 @@
     overlay.classList.toggle("zones-transparent", transparencyPercent >= 100);
     zoneTransparencyValue.textContent = `${zoneTransparencyInput.value}%`;
   }
+  function copperControlPriority(name) {
+    if (name === "F.Cu") return [0, 0];
+    if (name === "B.Cu") return [2, 0];
+    const innerLayer = /^In(\d+)\.Cu$/.exec(name);
+    if (innerLayer) return [1, Number(innerLayer[1])];
+    return [1, Number.MAX_SAFE_INTEGER];
+  }
   function defaultLayerPriority(name) {
     if (name.endsWith(".SilkS")) return 0;
     if (name === "Edge.Cuts") return 1;
@@ -229,7 +252,16 @@
   }
   const initialLayerOrder = layers
     .map((layer, index) => ({ name: layer.name, index }))
-    .sort((a, b) => defaultLayerPriority(a.name) - defaultLayerPriority(b.name) || a.index - b.index)
+    .sort((a, b) => {
+      const priorityDifference = defaultLayerPriority(a.name) - defaultLayerPriority(b.name);
+      if (priorityDifference) return priorityDifference;
+      if (a.name.endsWith(".Cu") && b.name.endsWith(".Cu")) {
+        const [aGroup, aIndex] = copperControlPriority(a.name);
+        const [bGroup, bIndex] = copperControlPriority(b.name);
+        return aGroup - bGroup || aIndex - bIndex || a.name.localeCompare(b.name);
+      }
+      return a.index - b.index;
+    })
     .map((layer) => layer.name); // First row is drawn on top.
   const layerOrder = [...initialLayerOrder];
   const initialLayerVisibility = new Map(layers.map((layer) => [layer.name, !!layer.visible]));
@@ -349,8 +381,8 @@
     $("#measure-distance").setAttribute("aria-pressed", String(active));
     canvas.classList.toggle("is-measuring", active);
     $("#interaction-hint").textContent = active
-      ? "Click two board points to measure Â· Click Measure or press Esc to exit Â· Right-drag to pan"
-      : "Export comments to save Â· Scroll to zoom Â· Right-drag to pan Â· Click nets to highlight Â· Click parts to select pads";
+      ? "Click two board points to measure · Click Measure or press Esc to exit · Right-drag to pan"
+      : "Export comments to save · Scroll to zoom · Right-drag to pan · Click nets to highlight · Click parts to select pads";
     renderMeasurements();
   }
 
@@ -667,6 +699,9 @@
       svg.classList.toggle("is-visible", visible);
       svg.setAttribute("aria-hidden", String(!visible));
     });
+    copperInputByLayer.forEach((quickInput, name) => {
+      quickInput.checked = inputByLayer.get(name)?.checked || false;
+    });
     overlay.querySelectorAll("[data-layer]").forEach((group) => {
       group.classList.toggle("layer-hidden", !layerVisible(group.dataset.layer));
     });
@@ -682,14 +717,54 @@
     const [moved] = layerOrder.splice(sourceIndex, 1);
     if (sourceIndex < insertionIndex) insertionIndex -= 1;
     layerOrder.splice(insertionIndex, 0, moved);
-    layerOrder.forEach((layerName) => layerList.append(rowByLayer.get(layerName)));
+    syncLayerListOrder();
     updateLayers();
+  }
+
+  function syncLayerListOrder() {
+    layerOrder.forEach((layerName) => layerList.append(rowByLayer.get(layerName)));
+    layerOrder.forEach((layerName) => {
+      const quickRow = copperRowByLayer.get(layerName);
+      if (quickRow) copperLayerList.append(quickRow);
+    });
   }
 
   let draggedLayer = null;
   function clearLayerDropIndicators() {
-    layerList.querySelectorAll(".is-drop-before, .is-drop-after").forEach((row) => {
+    document.querySelectorAll(".layer-row.is-drop-before, .layer-row.is-drop-after, .copper-layer-toggle.is-drop-before, .copper-layer-toggle.is-drop-after").forEach((row) => {
       row.classList.remove("is-drop-before", "is-drop-after");
+    });
+  }
+
+  function enableLayerDragging(row, layerName) {
+    row.draggable = true;
+    row.addEventListener("dragstart", (event) => {
+      draggedLayer = layerName;
+      row.classList.add("is-dragging");
+      event.dataTransfer.effectAllowed = "move";
+      event.dataTransfer.setData("text/plain", layerName);
+    });
+    row.addEventListener("dragover", (event) => {
+      if (!draggedLayer || draggedLayer === layerName) return;
+      event.preventDefault();
+      event.dataTransfer.dropEffect = "move";
+      clearLayerDropIndicators();
+      const bounds = row.getBoundingClientRect();
+      const afterTarget = event.clientY > bounds.top + bounds.height / 2;
+      row.classList.add(afterTarget ? "is-drop-after" : "is-drop-before");
+    });
+    row.addEventListener("drop", (event) => {
+      event.preventDefault();
+      const sourceName = draggedLayer || event.dataTransfer.getData("text/plain");
+      const bounds = row.getBoundingClientRect();
+      const afterTarget = event.clientY > bounds.top + bounds.height / 2;
+      reorderLayer(sourceName, layerName, afterTarget);
+      clearLayerDropIndicators();
+    });
+    row.addEventListener("dragend", () => {
+      draggedLayer = null;
+      row.classList.remove("is-dragging");
+      clearLayerDropIndicators();
     });
   }
 
@@ -697,34 +772,8 @@
     const label = document.createElement("label");
     label.className = "layer-row";
     label.dataset.rowLayer = layer.name;
-    label.draggable = true;
     label.title = "Drag this row to change its drawing order";
-    label.addEventListener("dragstart", (event) => {
-      draggedLayer = layer.name;
-      label.classList.add("is-dragging");
-      event.dataTransfer.effectAllowed = "move";
-      event.dataTransfer.setData("text/plain", layer.name);
-    });
-    label.addEventListener("dragover", (event) => {
-      if (!draggedLayer || draggedLayer === layer.name) return;
-      event.preventDefault();
-      event.dataTransfer.dropEffect = "move";
-      clearLayerDropIndicators();
-      const afterTarget = event.clientY > label.getBoundingClientRect().top + label.offsetHeight / 2;
-      label.classList.add(afterTarget ? "is-drop-after" : "is-drop-before");
-    });
-    label.addEventListener("drop", (event) => {
-      event.preventDefault();
-      const sourceName = draggedLayer || event.dataTransfer.getData("text/plain");
-      const afterTarget = event.clientY > label.getBoundingClientRect().top + label.offsetHeight / 2;
-      reorderLayer(sourceName, layer.name, afterTarget);
-      clearLayerDropIndicators();
-    });
-    label.addEventListener("dragend", () => {
-      draggedLayer = null;
-      label.classList.remove("is-dragging");
-      clearLayerDropIndicators();
-    });
+    enableLayerDragging(label, layer.name);
     const input = document.createElement("input");
     input.type = "checkbox";
     input.dataset.layer = layer.name;
@@ -740,6 +789,39 @@
     label.append(input, swatch, name);
     layerList.append(label);
     rowByLayer.set(layer.name, label);
+  });
+
+  const copperLayers = layers
+    .filter((layer) => layer.name.endsWith(".Cu"))
+    .sort((a, b) => {
+      const [aGroup, aIndex] = copperControlPriority(a.name);
+      const [bGroup, bIndex] = copperControlPriority(b.name);
+      return aGroup - bGroup || aIndex - bIndex || a.name.localeCompare(b.name);
+    });
+  $("#copper-quick-controls").hidden = copperLayers.length === 0;
+  copperLayers.forEach((layer) => {
+    const label = document.createElement("label");
+    label.className = "copper-layer-toggle";
+    label.title = `Toggle ${layer.name} visibility; drag to reorder its drawing order`;
+    enableLayerDragging(label, layer.name);
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.checked = layer.visible;
+    input.setAttribute("aria-label", `Show ${layer.name}`);
+    input.addEventListener("change", () => {
+      const layerInput = inputByLayer.get(layer.name);
+      if (layerInput) layerInput.checked = input.checked;
+      updateLayers();
+    });
+    const swatch = document.createElement("span");
+    swatch.className = "layer-swatch";
+    swatch.style.background = layer.color;
+    const name = document.createElement("span");
+    name.textContent = layer.name;
+    label.append(input, swatch, name);
+    copperLayerList.append(label);
+    copperInputByLayer.set(layer.name, input);
+    copperRowByLayer.set(layer.name, label);
   });
 
   function renderSelection() {
@@ -940,7 +1022,7 @@
   zoneTransparencyInput.addEventListener("input", updateZoneTransparency);
   renderNets();
   renderParts();
-  layerOrder.forEach((layerName) => layerList.append(rowByLayer.get(layerName)));
+  syncLayerListOrder();
   $("#net-search").addEventListener("input", (event) => renderNets(event.target.value));
   $("#part-search").addEventListener("input", (event) => renderParts(event.target.value));
   $("#show-all-layers").addEventListener("click", () => {
@@ -1152,7 +1234,7 @@
     renderSelectedPartPads();
     const flippedOrder = layerOrder.map(oppositeSideLayer);
     layerOrder.splice(0, layerOrder.length, ...flippedOrder);
-    layerOrder.forEach((layerName) => layerList.append(rowByLayer.get(layerName)));
+    syncLayerListOrder();
     stack.classList.toggle("is-bottom-view", bottomView);
     syncCommentMarkerText();
     event.currentTarget.setAttribute("aria-pressed", String(bottomView));
@@ -1215,7 +1297,7 @@
     flipButton.title = "Flip the board to view from the bottom";
     inputByLayer.forEach((input, name) => { input.checked = initialLayerVisibility.get(name) || false; });
     layerOrder.splice(0, layerOrder.length, ...initialLayerOrder);
-    layerOrder.forEach((layerName) => layerList.append(rowByLayer.get(layerName)));
+    syncLayerListOrder();
     selectedNets.clear();
     selectedPartIds.clear();
     renderSelectedPartPads();

@@ -4,6 +4,9 @@
 
 ### Added
 
+- Added compact-display tabs for the left sidebar's Layers, Nets, and Parts panels.
+- Added a separated copper quick-toggle column beside the full layer list; both lists can be dragged to change layer draw order.
+- Added a matching heading above the full layer list.
 - Added a distance measurement tool with a zoom-stable label and live cursor coordinates in the status bar.
 - Highlighted nets now move to the top of the net list while unconnected nets remain at the bottom.
 - Added a **Clear highlights** control to clear selected nets and parts together.

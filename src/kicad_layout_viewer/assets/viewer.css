@@ -80,7 +80,9 @@
 .comment-marker:focus{outline:none}
 .comment-marker circle{fill:#a78bda;stroke:#ece4ff;stroke-width:.12;filter:none}
 .comment-marker:hover circle,.comment-marker:focus circle,.comment-marker:active circle{fill:#c3a8f3;stroke:#ece4ff;stroke-width:.45}
-.layers-section .layer-list{flex:1;min-height:0}
+.layers-section .layer-list{flex:1;min-width:0;min-height:0}
+.full-layer-list{display:flex;flex:1;min-width:0;min-height:0;flex-direction:column}
+.full-layer-heading{margin:6px 0 5px 6px;color:var(--muted);font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase}
 .zone-transparency-control{margin:0 0 9px}
 @media(max-width:1000px){.app.has-comment-panel{grid-template-columns:240px minmax(0,1fr) 230px}}
 .comment-marker circle{transition:transform .12s ease;transform-box:fill-box;transform-origin:center}
@@ -130,12 +132,12 @@
 .selected-part-pads{pointer-events:none}
 .selected-part-box{fill:#ffe066;fill-opacity:.10;stroke:#ffe066;stroke-opacity:.38;stroke-width:1;vector-effect:non-scaling-stroke}
 .selected-part-pad{fill:#ffe066;fill-opacity:.45;stroke:#fff;stroke-width:1.2;vector-effect:non-scaling-stroke;pointer-events:none}
-.app{grid-template-columns:var(--sidebar-width,290px) 8px minmax(0,1fr)}
-.app.has-comment-panel{grid-template-columns:var(--sidebar-width,290px) 8px minmax(0,1fr) 280px}
+.app{grid-template-columns:var(--sidebar-width,330px) 8px minmax(0,1fr)}
+.app.has-comment-panel{grid-template-columns:var(--sidebar-width,330px) 8px minmax(0,1fr) 280px}
 .sidebar-resizer{position:relative;z-index:2;cursor:col-resize;touch-action:none;outline:none;background:var(--bg)}
 .sidebar-resizer::after{content:"";position:absolute;inset:0 3px;background:transparent;border-left:1px solid var(--line);border-right:1px solid var(--line)}
 .sidebar-resizer:hover::after,.sidebar-resizer:focus-visible::after,.sidebar-resizer:active::after{background:#263a49;border-color:#5f9fc0}
-@media(max-width:1000px){.app.has-comment-panel{grid-template-columns:var(--sidebar-width,290px) 8px minmax(0,1fr) 230px}}
+@media(max-width:1000px){.app.has-comment-panel{grid-template-columns:var(--sidebar-width,330px) 8px minmax(0,1fr) 230px}}
 .selected-part-box.bottom-side{fill:#73c8f3;stroke:#73c8f3}
 .selected-part-pad.bottom-side{fill:#73c8f3;stroke:#e4f6ff}
 .layers-section,.nets-section,.parts-section{flex:1 1 0;min-height:0;max-height:none;display:flex;flex-direction:column}
@@ -154,6 +156,26 @@
 .brand strong{font-size:16px}
 .brand .board-meta{font-size:12px;line-height:1.2}
 .comment-marker.is-dragging{cursor:grabbing}
+.sidebar-tabs{display:none}
+.layer-list-layout{display:flex;flex:1;min-height:0;gap:8px}
+.copper-quick-controls{flex:0 0 92px;min-width:0;padding:6px 8px 6px 0;margin-right:1px;border-right:1px solid var(--line);overflow:auto}
+.copper-quick-heading{margin:0 0 5px 6px;color:var(--muted);font-size:11px;font-weight:600;letter-spacing:.04em;text-transform:uppercase}
+.copper-layer-list{display:flex;flex-direction:column;gap:4px;overflow:visible}
+.copper-layer-toggle{display:inline-flex;align-items:center;gap:5px;min-height:26px;padding:3px 6px;border:1px solid var(--line);border-radius:4px;background:#151a21;cursor:grab;user-select:none;font-size:11px;white-space:nowrap}
+.copper-layer-toggle:active{cursor:grabbing}
+.copper-layer-toggle.is-dragging{opacity:.4}
+.copper-layer-toggle.is-drop-before{box-shadow:inset 0 2px var(--accent)}
+.copper-layer-toggle.is-drop-after{box-shadow:inset 0 -2px var(--accent)}
+.copper-layer-toggle:hover{background:#242d38;border-color:#718198}
+.copper-layer-toggle input{margin:0;accent-color:#78c3e8}
+.copper-layer-toggle .layer-swatch{width:8px;height:8px}
+@media(max-height:800px){
+  .sidebar-tabs{display:flex;gap:4px;padding:7px;border-bottom:1px solid var(--line)}
+  .sidebar-tabs button{flex:1;min-width:0;padding:6px 4px;font-size:12px}
+  .sidebar-tabs button[aria-pressed="true"]{border-color:#5f9fc0;background:#263a49;color:var(--accent);box-shadow:inset 0 0 0 1px #5f9fc055}
+  .sidebar .section.sidebar-panel-inactive{display:none}
+  .sidebar .section{flex:1 1 0}
+}
 .net-group.is-active{opacity:.62}
 .net-group .net-highlight,.net-group .pad-highlight,.net-group .zone-highlight{opacity:1}
 .net-group .pad-highlight{fill-opacity:1}
